@@ -63,6 +63,9 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       key !== "command" &&
       key !== "oldText" &&
       key !== "newText" &&
+      key !== "old_text" &&
+      key !== "new_text" &&
+      key !== "new_body" &&
       key !== "old_string" &&
       key !== "new_string" &&
       key !== "text" &&
@@ -221,6 +224,27 @@ test("paths array still splits",
 test("patch old_string preserved",
   { path: "x.ts", old_string: "line1\nline2", new_string: "new1\nnew2" },
   { path: "x.ts", old_string: "line1\nline2", new_string: "new1\nnew2" },
+  []
+);
+
+// Test 16: hashline set_line new_text preserved (snake_case)
+test("hashline set_line new_text preserved",
+  { edits: [{ set_line: { anchor: "5:ab", new_text: "def foo():\n    return 1\n" } }] },
+  { edits: [{ set_line: { anchor: "5:ab", new_text: "def foo():\n    return 1\n" } }] },
+  []
+);
+
+// Test 17: hashline replace old_text/new_text preserved
+test("hashline replace old_text/new_text preserved",
+  { edits: [{ replace: { old_text: "def old():\n    pass", new_text: "def new():\n    return 42" } }] },
+  { edits: [{ replace: { old_text: "def old():\n    pass", new_text: "def new():\n    return 42" } }] },
+  []
+);
+
+// Test 18: replace_symbol new_body preserved
+test("replace_symbol new_body preserved",
+  { edits: [{ replace_symbol: { symbol: "main", new_body: "print('hi')\n    return 0" } }] },
+  { edits: [{ replace_symbol: { symbol: "main", new_body: "print('hi')\n    return 0" } }] },
   []
 );
 

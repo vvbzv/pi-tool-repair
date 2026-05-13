@@ -1,6 +1,6 @@
 {
   "name": "@yanapattin-source/pi-tool-repair",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Validate-then-repair middleware for Pi agent tool calls — fixes common open-model tool use mistakes before execution",
   "license": "MIT",
   "author": "yanapattin-source",

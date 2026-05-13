@@ -89,6 +89,9 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       key !== "command" &&
       key !== "oldText" &&
       key !== "newText" &&
+      key !== "old_text" &&
+      key !== "new_text" &&
+      key !== "new_body" &&
       key !== "old_string" &&
       key !== "new_string" &&
       key !== "text" &&
