@@ -39,6 +39,17 @@ interface RepairStats {
 
 const NULLISH_VALUES = new Set([null]);
 
+// Parameter names that must NEVER be structurally altered — these are
+// documented as `string` (not `string[]` or JSON) and contain code/text/prose.
+// Altering them (json-parse, split-lines) corrupts the tool call.
+const STRING_CONTENT_KEYS = new Set([
+  "content", "command",
+  "oldText", "newText",
+  "old_text", "new_text", "new_body",
+  "old_string", "new_string",
+  "text", "message", "code", "prompt",
+]);
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -63,7 +74,13 @@ function repairArgs(obj: unknown, path = "$"): string[] {
     }
 
     // 2. String that looks like JSON → parse it
-    if (typeof val === "string") {
+    // SAFETY: Skip content-bearing string params — code that happens to be
+    // valid JSON (e.g. `["BTC","ETH"]` as a Python list literal) must not be
+    // converted to an actual array/object.
+    if (
+      typeof val === "string" &&
+      !STRING_CONTENT_KEYS.has(key)
+    ) {
       const t = val.trim();
       if ((t.startsWith("[") || t.startsWith("{")) && t.length > 2) {
         try {
@@ -79,25 +96,13 @@ function repairArgs(obj: unknown, path = "$"): string[] {
     // 3. Multi-line string where array likely expected
     // SAFETY: Skip string-only parameters that legitimately contain newlines.
     // write.content = Python/JS scripts, bash.command = shell scripts,
-    // edit.oldText/newText = code blocks -- splitting these to arrays breaks them.
+    // edit.old_text/new_text = code blocks -- splitting these to arrays breaks them.
     // Only split when the parameter is documented as accepting string[].
     if (
       typeof val === "string" &&
       val.includes("\n") &&
       val.trim().length > 0 &&
-      key !== "content" &&
-      key !== "command" &&
-      key !== "oldText" &&
-      key !== "newText" &&
-      key !== "old_text" &&
-      key !== "new_text" &&
-      key !== "new_body" &&
-      key !== "old_string" &&
-      key !== "new_string" &&
-      key !== "text" &&
-      key !== "message" &&
-      key !== "code" &&
-      key !== "prompt"
+      !STRING_CONTENT_KEYS.has(key)
     ) {
       const lines = val.split("\n").map((l) => l.trim()).filter(Boolean);
       if (lines.length > 1) {
