@@ -161,7 +161,7 @@ with the parsed value.
 with bracket/brace. Invalid JSON is left alone. Short strings like
 `"{}"` (2 chars) are never parsed — too risky for false positives.
 
-### 3. `split-lines` — Multi-line string to array
+### 3. `split-lines` — Multi-line string to array (with safety skips)
 
 **Problem:** When a tool parameter expects `string[]`, models sometimes
 emit a single newline-delimited string instead. Common with `grep`
@@ -170,6 +170,12 @@ patterns, file path lists, or multi-item arguments.
 **Fix:** Detect strings containing newlines with non-whitespace content
 on at least two lines. Split by newline, trim each line, and replace
 with a string array.
+
+**Safety skips (v0.1.1):** Multi-line strings for `content`, `command`,
+`oldText`, `newText`, `old_string`, `new_string`, `text`, `message`,
+`code`, and `prompt` parameters are **never split**. These are
+documented as `string` parameters where newlines are intentional
+(Python scripts, shell commands, code blocks, prose).
 
 ```typescript
 // Before (model output)

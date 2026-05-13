@@ -77,7 +77,25 @@ function repairArgs(obj: unknown, path = "$"): string[] {
     }
 
     // 3. Multi-line string where array likely expected
-    if (typeof val === "string" && val.includes("\n") && val.trim().length > 0) {
+    // SAFETY: Skip string-only parameters that legitimately contain newlines.
+    // write.content = Python/JS scripts, bash.command = shell scripts,
+    // edit.oldText/newText = code blocks -- splitting these to arrays breaks them.
+    // Only split when the parameter is documented as accepting string[].
+    if (
+      typeof val === "string" &&
+      val.includes("\n") &&
+      val.trim().length > 0 &&
+      key !== "content" &&
+      key !== "command" &&
+      key !== "oldText" &&
+      key !== "newText" &&
+      key !== "old_string" &&
+      key !== "new_string" &&
+      key !== "text" &&
+      key !== "message" &&
+      key !== "code" &&
+      key !== "prompt"
+    ) {
       const lines = val.split("\n").map((l) => l.trim()).filter(Boolean);
       if (lines.length > 1) {
         (obj as Record<string, unknown>)[key] = lines;

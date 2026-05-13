@@ -54,7 +54,22 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       }
     }
     // 3. split-lines
-    if (typeof val === "string" && val.includes("\n") && val.trim().length > 0) {
+    // SAFETY: Skip string-only parameters that legitimately contain newlines.
+    if (
+      typeof val === "string" &&
+      val.includes("\n") &&
+      val.trim().length > 0 &&
+      key !== "content" &&
+      key !== "command" &&
+      key !== "oldText" &&
+      key !== "newText" &&
+      key !== "old_string" &&
+      key !== "new_string" &&
+      key !== "text" &&
+      key !== "message" &&
+      key !== "code" &&
+      key !== "prompt"
+    ) {
       const lines = val.split("\n").map(l => l.trim()).filter(Boolean);
       if (lines.length > 1) {
         (obj as Record<string, unknown>)[key] = lines;
@@ -171,6 +186,41 @@ test("short string not parsed as JSON",
 test("non-JSON curly string",
   { text: "{not valid json!!}" },
   { text: "{not valid json!!}" },
+  []
+);
+
+// Test 11: write.content preserved (multi-line Python)
+test("write content preserved multi-line",
+  { path: "test.py", content: "#!/usr/bin/env python3\n\nprint('hello')\nprint('world')" },
+  { path: "test.py", content: "#!/usr/bin/env python3\n\nprint('hello')\nprint('world')" },
+  []
+);
+
+// Test 12: bash.command preserved multi-line
+test("bash command preserved multi-line",
+  { command: "for f in *.txt;\ndo echo $f;\ndone" },
+  { command: "for f in *.txt;\ndo echo $f;\ndone" },
+  []
+);
+
+// Test 13: edit.oldText preserved multi-line
+test("edit oldText preserved multi-line",
+  { path: "x.ts", oldText: "function foo() {\n  return 1;\n}", newText: "function foo() {\n  return 2;\n}" },
+  { path: "x.ts", oldText: "function foo() {\n  return 1;\n}", newText: "function foo() {\n  return 2;\n}" },
+  []
+);
+
+// Test 14: paths param still splits (not in safety list)
+test("paths array still splits",
+  { paths: "src/a.ts\nsrc/b.ts" },
+  { paths: ["src/a.ts", "src/b.ts"] },
+  ["split-lines $.paths (2 items)"]
+);
+
+// Test 15: old_string/new_string preserved (Hermes patch format)
+test("patch old_string preserved",
+  { path: "x.ts", old_string: "line1\nline2", new_string: "new1\nnew2" },
+  { path: "x.ts", old_string: "line1\nline2", new_string: "new1\nnew2" },
   []
 );
 
