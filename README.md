@@ -171,11 +171,12 @@ patterns, file path lists, or multi-item arguments.
 on at least two lines. Split by newline, trim each line, and replace
 with a string array.
 
-**Safety skips (v0.1.1):** Multi-line strings for `content`, `command`,
-`oldText`, `newText`, `old_string`, `new_string`, `text`, `message`,
-`code`, and `prompt` parameters are **never split**. These are
-documented as `string` parameters where newlines are intentional
-(Python scripts, shell commands, code blocks, prose).
+**Safety skips (v0.1.2):** Multi-line strings for `content`, `command`,
+`oldText`, `newText`, `old_text`, `new_text`, `new_body`, `old_string`,
+`new_string`, `text`, `message`, `code`, and `prompt` parameters are
+**never split**. These are documented as `string` parameters where
+newlines are intentional (Python scripts, shell commands, code blocks,
+prose). The snake_case variants cover pi-hashline-readmap's edit schema.
 
 ```typescript
 // Before (model output)
