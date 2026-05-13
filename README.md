@@ -161,6 +161,21 @@ with the parsed value.
 with bracket/brace. Invalid JSON is left alone. Short strings like
 `"{}"` (2 chars) are never parsed — too risky for false positives.
 
+**Content safety (v0.1.3):** The `STRING_CONTENT_KEYS` set (shared with
+split-lines) prevents json-parse from converting code/text params that
+happen to be valid JSON. A Python list literal like `["BTC","ETH"]` in
+`new_text` is preserved as a string, not parsed into an array.
+
+```typescript
+// DANGER (pre-v0.1.3): code that's valid JSON gets corrupted
+{ edits: [{ replace: { old_text: "x", new_text: '["BTC","ETH"]' } }] }
+// → new_text became ["BTC", "ETH"] (array!) — edit tool broke
+
+// SAFE (v0.1.3): content params are never parsed
+{ edits: [{ replace: { old_text: "x", new_text: '["BTC","ETH"]' } }] }
+// → new_text stays '["BTC","ETH"]' (string) — edit tool works
+```
+
 ### 3. `split-lines` — Multi-line string to array (with safety skips)
 
 **Problem:** When a tool parameter expects `string[]`, models sometimes
@@ -171,7 +186,7 @@ patterns, file path lists, or multi-item arguments.
 on at least two lines. Split by newline, trim each line, and replace
 with a string array.
 
-**Safety skips (v0.1.2):** Multi-line strings for `content`, `command`,
+**Safety skips (v0.1.3):** Both `json-parse` and `split-lines` share a
 `oldText`, `newText`, `old_text`, `new_text`, `new_body`, `old_string`,
 `new_string`, `text`, `message`, `code`, and `prompt` parameters are
 **never split**. These are documented as `string` parameters where
