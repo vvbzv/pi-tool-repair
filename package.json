@@ -1,0 +1,33 @@
+{
+  "name": "@vvbz/pi-tool-repair",
+  "version": "0.1.0",
+  "description": "Validate-then-repair middleware for Pi agent tool calls — fixes common open-model tool use mistakes before execution",
+  "license": "MIT",
+  "author": "vvbz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vvbz/pi-tool-repair"
+  },
+  "keywords": [
+    "pi-agent",
+    "pi-extension",
+    "tool-repair",
+    "tool-calling",
+    "deepseek",
+    "kimi",
+    "open-models",
+    "harness"
+  ],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}
