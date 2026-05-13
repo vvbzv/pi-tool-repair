@@ -286,6 +286,8 @@ entry in the session (custom type `pi-tool-repair-stats`).
 | `pi-fork` | ✅ Compatible | Forks inherit the extension normally |
 | `pi-minimal-subagent` | ✅ Compatible | Subagents get their own extension instance with fresh stats |
 | `LaPis` | ✅ Compatible | No overlap — LaPis is code analysis, repair is tool call middleware |
+| `pi-hashline-readmap` | ✅ Compatible (v0.1.3+) | Different lifecycle layers: repair runs on `tool_call` hook (arg fixes), readmap registers tools only. STRING_CONTENT_KEYS covers readmap's snake_case params (`new_text`, `old_text`, `new_body`) |
+| `pi-snap-edit` | ✅ Compatible | Same architecture — repair fixes args, snap-edit executes tools |
 
 ### With different models
 
