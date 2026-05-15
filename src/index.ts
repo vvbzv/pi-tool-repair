@@ -37,7 +37,7 @@ interface RepairStats {
 // Repair helpers
 // ---------------------------------------------------------------------------
 
-const NULLISH_VALUES = new Set([null, ""]);
+const NULLISH_VALUES = new Set([null, undefined, ""]);
 
 // Parameter names that must NEVER be structurally altered — these are
 // documented as `string` (not `string[]` or JSON) and contain code/text/prose.
@@ -48,20 +48,27 @@ const STRING_CONTENT_KEYS = new Set([
   "old_text", "new_text", "new_body",
   "old_string", "new_string",
   "text", "message", "code", "prompt",
-  "args",  // mcp adapter expects JSON string, never parse to object
+  "args",     // mcp adapter expects JSON string, never parse to object
+  "pattern",  // regex patterns like [a-z]+ must stay strings
+  "query",    // search queries
+  "goal", "context",  // task/subagent descriptions
+  "body", "description", "summary", "note", "notes",  // prose fields
+  "path", "name", "title", "subject", "label", "labels",  // text identifiers
 ]);
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+const MAX_DEPTH = 12;
+
 /**
  * Walk a tool args object and apply targeted fixes in place.
  * Returns short descriptions of what was changed.
  */
-function repairArgs(obj: unknown, path = "$"): string[] {
+function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
   const fixes: string[] = [];
-  if (!isObject(obj)) return fixes;
+  if (!isObject(obj) || depth > MAX_DEPTH) return fixes;
 
   for (const key of Object.keys(obj)) {
     const val = (obj as Record<string, unknown>)[key];
@@ -74,12 +81,12 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       continue;
     }
 
-    // 2. Object where JSON string expected → stringify
+    // 2. Object/Array where JSON string expected → stringify
     //    The mcp tool's `args` param must be a JSON string, but LLMs often
-    //    pass a raw object. Stringify it so the adapter can JSON.parse it.
-    if (isObject(val) && key === "args") {
+    //    pass a raw object or array. Stringify it so the adapter can JSON.parse it.
+    if ((isObject(val) || Array.isArray(val)) && key === "args") {
       (obj as Record<string, unknown>)[key] = JSON.stringify(val);
-      fixes.push(`stringify ${fullPath} (object→JSON)`);
+      fixes.push(`stringify ${fullPath} (${Array.isArray(val) ? "array" : "object"}→JSON)`);
       continue;
     }
 
@@ -132,7 +139,9 @@ function repairArgs(obj: unknown, path = "$"): string[] {
     }
 
     // 6. Close unclosed braces in truncated JSON strings
-    if (typeof val === "string") {
+    // SAFETY: Skip content-bearing strings — closing braces in code or prose
+    // corrupts the text (e.g. `title: "Price: ${VAR}"` would gain a spurious `}`).
+    if (typeof val === "string" && !STRING_CONTENT_KEYS.has(key)) {
       const fixed = closeUnclosedBraces(val);
       if (fixed !== val) {
         (obj as Record<string, unknown>)[key] = fixed;
@@ -141,10 +150,10 @@ function repairArgs(obj: unknown, path = "$"): string[] {
     }
 
     // Recurse
-    if (isObject(val)) fixes.push(...repairArgs(val, fullPath));
+    if (isObject(val)) fixes.push(...repairArgs(val, fullPath, depth + 1));
     if (Array.isArray(val)) {
       val.forEach((item, i) => {
-        if (isObject(item)) fixes.push(...repairArgs(item, `${fullPath}[${i}]`));
+        if (isObject(item)) fixes.push(...repairArgs(item, `${fullPath}[${i}]`, depth + 1));
       });
     }
   }
