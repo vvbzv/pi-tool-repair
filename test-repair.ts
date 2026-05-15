@@ -209,6 +209,29 @@ test(
   ["json-parse $.config (object)", "null→omit $.config.limit"],
 );
 
+// ── v0.2.0 tests: truncated json closure with stack ──
+
+test(
+  "close-braces: closes array containing object in nesting order",
+  { value: '[{"a":1' },
+  { value: '[{"a":1}]' },
+  ["close-braces $.value"],
+);
+
+test(
+  "close-braces: closes object containing array object in nesting order",
+  { value: '{"a":[{"b":1' },
+  { value: '{"a":[{"b":1}]}' },
+  ["close-braces $.value"],
+);
+
+test(
+  "close-braces: ignores non-json-looking strings",
+  { value: "price uses ${VAR" },
+  { value: "price uses ${VAR" },
+  [],
+);
+
 // ── End-to-end: full edit call simulation ───────
 
 test("E2E: bulk hashline edit with mixed single/multi",

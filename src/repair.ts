@@ -132,29 +132,36 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
 
 /** Append missing closing braces/brackets to truncated JSON strings. */
 export function closeUnclosedBraces(s: string): string {
-  let brace = 0;
-  let bracket = 0;
+  const trimmed = s.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return s;
+
+  const stack: string[] = [];
   let inString = false;
   let esc = false;
 
   for (const ch of s) {
-    if (esc) { esc = false; continue; }
-    if (ch === "\\") { esc = true; continue; }
-    if (ch === '"' && !esc) { inString = !inString; continue; }
-    if (!inString) {
-      if (ch === "{") brace++;
-      if (ch === "}") brace--;
-      if (ch === "[") bracket++;
-      if (ch === "]") bracket--;
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (ch === "\\") {
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") {
+      if (stack.length === 0 || stack[stack.length - 1] !== ch) return s;
+      stack.pop();
     }
   }
 
-  // Only repair if the imbalance is plausibly a truncation (1-3 missing closers)
-  const total = brace + bracket;
-  if (total <= 0 || total > 3) return s;
-
-  let fixed = s;
-  while (bracket > 0) { fixed += "]"; bracket--; }
-  while (brace > 0) { fixed += "}"; brace--; }
-  return fixed;
+  if (stack.length === 0 || stack.length > 3) return s;
+  return s + stack.reverse().join("");
 }
