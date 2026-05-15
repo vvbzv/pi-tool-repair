@@ -37,7 +37,7 @@ interface RepairStats {
 // Repair helpers
 // ---------------------------------------------------------------------------
 
-const NULLISH_VALUES = new Set([null]);
+const NULLISH_VALUES = new Set([null, ""]);
 
 // Parameter names that must NEVER be structurally altered — these are
 // documented as `string` (not `string[]` or JSON) and contain code/text/prose.
@@ -48,6 +48,7 @@ const STRING_CONTENT_KEYS = new Set([
   "old_text", "new_text", "new_body",
   "old_string", "new_string",
   "text", "message", "code", "prompt",
+  "args",  // mcp adapter expects JSON string, never parse to object
 ]);
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -73,7 +74,16 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       continue;
     }
 
-    // 2. String that looks like JSON → parse it
+    // 2. Object where JSON string expected → stringify
+    //    The mcp tool's `args` param must be a JSON string, but LLMs often
+    //    pass a raw object. Stringify it so the adapter can JSON.parse it.
+    if (isObject(val) && key === "args") {
+      (obj as Record<string, unknown>)[key] = JSON.stringify(val);
+      fixes.push(`stringify ${fullPath} (object→JSON)`);
+      continue;
+    }
+
+    // 3. String that looks like JSON → parse it
     // SAFETY: Skip content-bearing string params — code that happens to be
     // valid JSON (e.g. `["BTC","ETH"]` as a Python list literal) must not be
     // converted to an actual array/object.
@@ -93,7 +103,7 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       }
     }
 
-    // 3. Multi-line string where array likely expected
+    // 4. Multi-line string where array likely expected
     // SAFETY: Skip string-only parameters that legitimately contain newlines.
     // write.content = Python/JS scripts, bash.command = shell scripts,
     // edit.old_text/new_text = code blocks -- splitting these to arrays breaks them.
@@ -111,7 +121,7 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       }
     }
 
-    // 4. Strip accidental Markdown autolinks from file-like paths
+    // 5. Strip accidental Markdown autolinks from file-like paths
     if (
       typeof val === "string" &&
       /^<[^>]+\.[a-z]{1,6}>$/i.test(val) &&
@@ -121,7 +131,7 @@ function repairArgs(obj: unknown, path = "$"): string[] {
       fixes.push(`strip-md-link ${fullPath}`);
     }
 
-    // 5. Close unclosed braces in truncated JSON strings
+    // 6. Close unclosed braces in truncated JSON strings
     if (typeof val === "string") {
       const fixed = closeUnclosedBraces(val);
       if (fixed !== val) {
