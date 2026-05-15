@@ -285,7 +285,7 @@ entry in the session (custom type `pi-tool-repair-stats`).
 | `pi-observational-memory` | ✅ Compatible | No shared hooks — repair is tool_call, memory is compaction |
 | `pi-fork` | ✅ Compatible | Forks inherit the extension normally |
 | `pi-minimal-subagent` | ✅ Compatible | Subagents get their own extension instance with fresh stats |
-| `LaPis` | ✅ Compatible | No overlap — LaPis is code analysis, repair is tool call middleware |
+| `LaPis` / `memory-code` | ✅ Compatible | This extension only repairs tool-call inputs and does not compact or mutate LaPis tool results |
 | `pi-hashline-readmap` | ✅ Compatible (v0.1.3+) | Different lifecycle layers: repair runs on `tool_call` hook (arg fixes), readmap registers tools only. STRING_CONTENT_KEYS covers readmap's snake_case params (`new_text`, `old_text`, `new_body`) |
 | `pi-snap-edit` | ✅ Compatible | Same architecture — repair fixes args, snap-edit executes tools |
 
@@ -330,11 +330,11 @@ Future versions may add a config file at
 
 ```bash
 cd pi-tool-repair
-npx tsx test-repair.ts
+npm test
 ```
 
-Runs 10 test cases covering all 5 repair passes, nested repairs, and
-false-positive guards. All should pass.
+Runs the repair regression suite covering all repair passes, nested
+repairs, and false-positive guards.
 
 ### Integration test (in Pi)
 
