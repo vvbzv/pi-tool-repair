@@ -87,16 +87,7 @@ function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
       continue;
     }
 
-    // 2. Object/Array where JSON string expected → stringify
-    //    The mcp tool's `args` param must be a JSON string, but LLMs often
-    //    pass a raw object or array. Stringify it so the adapter can JSON.parse it.
-    if ((isObject(val) || Array.isArray(val)) && key === "args") {
-      (obj as Record<string, unknown>)[key] = JSON.stringify(val);
-      fixes.push(`stringify ${fullPath} (${Array.isArray(val) ? "array" : "object"}→JSON)`);
-      continue;
-    }
-
-    // 3. String that looks like JSON → parse it
+    // 2. String that looks like JSON → parse it
     // SAFETY: Skip content-bearing string params — code that happens to be
     // valid JSON (e.g. `["BTC","ETH"]` as a Python list literal) must not be
     // converted to an actual array/object.
@@ -116,7 +107,7 @@ function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
       }
     }
 
-    // 4. Multi-line string where array likely expected
+    // 3. Multi-line string where array likely expected
     // SAFETY: Skip string-only parameters that legitimately contain newlines.
     // write.content = Python/JS scripts, bash.command = shell scripts,
     // edit.old_text/new_text = code blocks -- splitting these to arrays breaks them.
@@ -141,7 +132,7 @@ function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
       }
     }
 
-    // 5. Strip accidental Markdown autolinks from file-like paths
+    // 4. Strip accidental Markdown autolinks from file-like paths
     if (
       typeof val === "string" &&
       /^<[^>]+\.[a-z]{1,6}>$/i.test(val) &&
@@ -151,7 +142,7 @@ function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
       fixes.push(`strip-md-link ${fullPath}`);
     }
 
-    // 6. Close unclosed braces in truncated JSON strings
+    // 5. Close unclosed braces in truncated JSON strings
     // SAFETY: Skip content-bearing strings — closing braces in code or prose
     // corrupts the text (e.g. `title: "Price: ${VAR}"` would gain a spurious `}`).
     if (typeof val === "string" && !STRING_CONTENT_KEYS.has(key)) {
@@ -254,24 +245,34 @@ export default function (pi: ExtensionAPI) {
 
   // ── Core: intercept every tool call and repair args ────────────────
   pi.on("tool_call", (event, ctx) => {
-    stats.totalCalls++;
-
     if (!event.input || typeof event.input !== "object") return;
 
+    stats.totalCalls++;
     const input = event.input as Record<string, unknown>;
-    const fixes = repairArgs(input);
+    const allFixes: string[] = [];
 
-    if (fixes.length > 0) {
+    // Tool-specific: mcp adapter expects args as JSON string, but LLMs
+    // often pass a raw object/array. Stringify before generic repair.
+    if (event.toolName === "mcp" && (isObject(input.args) || Array.isArray(input.args))) {
+      const argsType = Array.isArray(input.args) ? "array" : "object";
+      input.args = JSON.stringify(input.args);
+      allFixes.push(`stringify $.args (${argsType}→JSON)`);
+    }
+
+    // Generic repair pass
+    allFixes.push(...repairArgs(input));
+
+    if (allFixes.length > 0) {
       stats.repairedCalls++;
       stats.repairs[event.toolName] =
-        (stats.repairs[event.toolName] || 0) + fixes.length;
+        (stats.repairs[event.toolName] || 0) + allFixes.length;
 
-      for (const f of fixes) {
+      for (const f of allFixes) {
         const type = f.split(" ")[0];
         stats.repairTypes[type] = (stats.repairTypes[type] || 0) + 1;
       }
 
-      stats.lastRepair = `${event.toolName}: ${fixes.join(", ")}`;
+      stats.lastRepair = `${event.toolName}: ${allFixes.join(", ")}`;
       ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
     }
   });
