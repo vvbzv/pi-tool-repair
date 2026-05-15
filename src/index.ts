@@ -15,7 +15,7 @@
  *
  * All repairs are logged and surfaced as a compact footer status line.
  *
- * Install:  pi install git:github.com/vvbz/pi-tool-repair
+ * Install:  pi install git:github.com/yanapattin-source/pi-tool-repair
  *           or copy this folder into ~/.pi/agent/extensions/
  */
 
@@ -25,6 +25,38 @@ import { isObject, repairArgs } from "./repair";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Pure helper: apply tool-specific + generic repairs to input. */
+export function repairToolInput(
+  toolName: string,
+  input: Record<string, unknown>,
+): string[] {
+  const fixes: string[] = [];
+
+  if (
+    toolName === "mcp" &&
+    (isObject(input.args) || Array.isArray(input.args))
+  ) {
+    const args = input.args;
+
+    // Repair obj/array args BEFORE stringify — this catches null→omit, etc.
+    if (isObject(args)) {
+      fixes.push(...repairArgs(args, "$.args"));
+    } else {
+      (args as unknown[]).forEach((item, i) => {
+        if (isObject(item)) fixes.push(...repairArgs(item, `$.args[${i}]`));
+      });
+    }
+
+    const argsType = Array.isArray(args) ? "array" : "object";
+    input.args = JSON.stringify(args);
+    fixes.push(`stringify $.args (${argsType}→JSON)`);
+    return fixes;
+  }
+
+  fixes.push(...repairArgs(input));
+  return fixes;
+}
 
 interface RepairStats {
   totalCalls: number;
@@ -89,18 +121,7 @@ export default function (pi: ExtensionAPI) {
 
     stats.totalCalls++;
     const input = event.input as Record<string, unknown>;
-    const allFixes: string[] = [];
-
-    // Tool-specific: mcp adapter expects args as JSON string, but LLMs
-    // often pass a raw object/array. Stringify before generic repair.
-    if (event.toolName === "mcp" && (isObject(input.args) || Array.isArray(input.args))) {
-      const argsType = Array.isArray(input.args) ? "array" : "object";
-      input.args = JSON.stringify(input.args);
-      allFixes.push(`stringify $.args (${argsType}→JSON)`);
-    }
-
-    // Generic repair pass
-    allFixes.push(...repairArgs(input));
+    const allFixes = repairToolInput(event.toolName, input);
 
     if (allFixes.length > 0) {
       stats.repairedCalls++;
@@ -113,8 +134,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       stats.lastRepair = `${event.toolName}: ${allFixes.join(", ")}`;
-      ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
     }
+
+    ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
   });
 
 }

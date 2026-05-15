@@ -32,16 +32,10 @@ demands. A forgiving harness closes this gap.
 
 ### The evidence
 
-From Ahmad Awais / Reasonix research (2026):
-
-> By adding a smart tool-input repair layer, DeepSeek V4 Pro started
-> beating Opus 4.7 in 6/10 internal evals. The failure modes across
-> open models are very predictable and limited — a few targeted fixes
-> cover nearly all cases.
-
-The same validate-then-repair approach, applied at Pi's tool-call
-boundary, brings these gains to **any model, any provider** — without
-modifying the model, retraining, or adding LLM calls.
+Anecdotal internal evals reported by Ahmad Awais / Reasonix (2026)
+suggest that targeted tool-input repair can materially improve open-model
+coding-agent reliability. This project applies the same general idea to
+Pi, but does not claim benchmark parity with Reasonix.
 
 ---
 
@@ -238,10 +232,10 @@ closing characters.
 
 ```typescript
 // Before (model output — truncated by streaming)
-{ body: '{"name":"test","items":[1,2' }
+{ payload: '{"name":"test","items":[1,2' }
 
 // After (repaired)
-{ body: '{"name":"test","items":[1,2]}' }
+{ payload: '{"name":"test","items":[1,2]}' }
 ```
 
 **Safety:** Only repairs imbalance ≤3 characters. Heavier imbalance
@@ -315,8 +309,8 @@ called.
 No configuration required. The extension works out of the box with
 sensible defaults.
 
-If you want to disable specific repair passes, edit the extension code
-directly in `src/index.ts` — comment out the pass you want to skip in
+If you want to disable specific repair passes, edit the repair logic in
+`src/repair.ts` — comment out the pass you want to skip in
 the `repairArgs` function.
 
 Future versions may add a config file at
@@ -392,7 +386,7 @@ The source repo is at `github.com/yanapattin-source/pi-tool-repair`.
 
 To add a new repair pass:
 1. Add the detection + fix logic to the `repairArgs` function in
-   `src/index.ts`
+   `src/repair.ts`
 2. Add test cases to `test-repair.ts`
 3. Run the tests: `npx tsx test-repair.ts`
 4. Submit a PR

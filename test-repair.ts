@@ -3,6 +3,7 @@
  * Run: npm test
  */
 import { repairArgs } from "./src/repair";
+import { repairToolInput } from "./src/index";
 
 // ── Test cases ──────────────────────────────────
 
@@ -57,9 +58,9 @@ test("markdown autolink in path",
 );
 
 test("unclosed braces in truncated JSON",
-  { body: '{"name":"test","items":[1,2' },
-  { body: '{"name":"test","items":[1,2]}' },
-  ["close-braces $.body"]
+  { payload: '{"name":"test","items":[1,2' },
+  { payload: '{"name":"test","items":[1,2]}' },
+  ["close-braces $.payload"]
 );
 
 test("nested null + json-parse",
