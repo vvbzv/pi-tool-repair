@@ -54,6 +54,12 @@ const STRING_CONTENT_KEYS = new Set([
   "goal", "context",  // task/subagent descriptions
   "body", "description", "summary", "note", "notes",  // prose fields
   "path", "name", "title", "subject", "label", "labels",  // text identifiers
+  "data",     // process tool stdin (multi-line scripts)
+  "script",   // cronjob script content
+  "instructions", "template", "example", "examples",  // generic prose
+  "expression", "statement",  // code/math expressions
+  "use_case", "known_fields",  // Composio search prose params
+  "output", "source", "target",  // generic text fields
 ]);
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -115,6 +121,8 @@ function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
     // write.content = Python/JS scripts, bash.command = shell scripts,
     // edit.old_text/new_text = code blocks -- splitting these to arrays breaks them.
     // Only split when the parameter is documented as accepting string[].
+    // HEURISTIC: If most lines look like prose (end with .!?;: or >80 chars),
+    // treat as a paragraph, not an array.
     if (
       typeof val === "string" &&
       val.includes("\n") &&
@@ -123,8 +131,13 @@ function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
     ) {
       const lines = val.split("\n").map((l) => l.trim()).filter(Boolean);
       if (lines.length > 1) {
-        (obj as Record<string, unknown>)[key] = lines;
-        fixes.push(`split-lines ${fullPath} (${lines.length} items)`);
+        const proseCount = lines.filter(
+          l => l.length > 80 || /[.!?;:]$/.test(l)
+        ).length;
+        if (proseCount / lines.length <= 0.4) {
+          (obj as Record<string, unknown>)[key] = lines;
+          fixes.push(`split-lines ${fullPath} (${lines.length} items)`);
+        }
       }
     }
 
