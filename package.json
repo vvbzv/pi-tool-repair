@@ -21,9 +21,18 @@
   "pi": {
     "extensions": ["./src/index.ts"]
   },
-  "dependencies": {},
-  "devDependencies": {
+  "scripts": {
+    "test": "tsx test-repair.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
   },
   "files": [
     "src",
