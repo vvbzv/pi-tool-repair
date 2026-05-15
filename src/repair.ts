@@ -5,8 +5,6 @@
  * consumed by the Pi extension in src/index.ts.
  */
 
-export const NULLISH_VALUES = new Set([null, undefined, ""]);
-
 export const STRING_CONTENT_KEYS = new Set([
   "content", "command",
   "oldText", "newText",
@@ -46,7 +44,7 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
     const fullPath = `${path}.${key}`;
 
     // 1. Strip null values → delete the key (null ≠ omit for optional fields)
-    if (NULLISH_VALUES.has(val)) {
+    if (val === null) {
       delete (obj as Record<string, unknown>)[key];
       fixes.push(`null→omit ${fullPath}`);
       continue;

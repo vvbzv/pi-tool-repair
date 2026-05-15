@@ -35,13 +35,13 @@ test("null on optional field",
 test("stringified array",
   { edits: '[{"old":"a","new":"b"}]' },
   { edits: [{ old: "a", new: "b" }] },
-  ["json-parse $.edits"]
+  ["json-parse $.edits (array)"]
 );
 
 test("stringified object",
   { config: '{"port":3000,"debug":true}' },
   { config: { port: 3000, debug: true } },
-  ["json-parse $.config"]
+  ["json-parse $.config (object)"]
 );
 
 test("multi-line string → array",
@@ -65,7 +65,7 @@ test("unclosed braces in truncated JSON",
 test("nested null + json-parse",
   { file: { path: null, items: '["a","b"]' } },
   { file: { items: ["a", "b"] } },
-  ["null→omit $.file.path", "json-parse $.file.items"]
+  ["null→omit $.file.path", "json-parse $.file.items (array)"]
 );
 
 test("clean input unchanged",
@@ -161,13 +161,29 @@ test("json-parse: content NOT parsed (trading params)",
 test("json-parse: edits still parses (non-content key)",
   { edits: '[{"old_text":"a","new_text":"b"}]' },
   { edits: [{ old_text: "a", new_text: "b" }] },
-  ["json-parse $.edits"]
+  ["json-parse $.edits (array)"]
 );
 
 test("json-parse: paths array stringified parses",
   { paths: '["src/a.ts","src/b.ts"]' },
   { paths: ["src/a.ts", "src/b.ts"] },
-  ["json-parse $.paths"]
+  ["json-parse $.paths (array)"]
+);
+
+// ── v0.2.0 tests: null→omit strips only null ──
+
+test(
+  "null→omit: strips null only",
+  { optional: null, empty: "", zero: 0, falsy: false },
+  { empty: "", zero: 0, falsy: false },
+  ["null→omit $.optional"],
+);
+
+test(
+  "null→omit: preserves empty content strings",
+  { content: "", command: "", newText: "", pattern: "" },
+  { content: "", command: "", newText: "", pattern: "" },
+  [],
 );
 
 // ── End-to-end: full edit call simulation ───────
