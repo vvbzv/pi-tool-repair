@@ -62,6 +62,19 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
           if (Array.isArray(parsed) || isObject(parsed)) {
             (obj as Record<string, unknown>)[key] = parsed;
             fixes.push(`json-parse ${fullPath} (${Array.isArray(parsed) ? "array" : "object"})`);
+
+            // Recursively repair the parsed value in the same pass
+            if (isObject(parsed)) {
+              fixes.push(...repairArgs(parsed, fullPath, depth + 1));
+            } else {
+              parsed.forEach((item, i) => {
+                if (isObject(item))
+                  fixes.push(...repairArgs(item, `${fullPath}[${i}]`, depth + 1));
+              });
+            }
+
+            // Skip remaining passes — they'd operate on the stale original string
+            continue;
           }
         } catch { /* not valid JSON, leave alone */ }
       }

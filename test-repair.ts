@@ -186,6 +186,29 @@ test(
   [],
 );
 
+// ── v0.2.0 tests: json parse ordering + recursive repair ──
+
+test(
+  "json-parse: pretty object is not split after parsing",
+  { config: '{\n  "a": 1\n}' },
+  { config: { a: 1 } },
+  ["json-parse $.config (object)"],
+);
+
+test(
+  "json-parse: pretty array is not split after parsing",
+  { paths: '[\n  "src/a.ts",\n  "src/b.ts"\n]' },
+  { paths: ["src/a.ts", "src/b.ts"] },
+  ["json-parse $.paths (array)"],
+);
+
+test(
+  "json-parse: recursively repairs parsed object",
+  { config: '{"limit":null,"name":"ok"}' },
+  { config: { name: "ok" } },
+  ["json-parse $.config (object)", "null→omit $.config.limit"],
+);
+
 // ── End-to-end: full edit call simulation ───────
 
 test("E2E: bulk hashline edit with mixed single/multi",
