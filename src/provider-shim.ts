@@ -103,7 +103,7 @@ const streamSimpleOpenAICompletions: OpenAICompletionsSimpleStream = (model, con
 	const stream = new LocalAssistantMessageEventStream();
 	const baseModel = { ...model, api: "openai-completions" as const };
 
-	void import("@earendil-works/pi-ai/openai-completions")
+	import("@earendil-works/pi-ai")
 		.then(({ streamSimpleOpenAICompletions: baseStream }) => baseStream(baseModel, context, options))
 		.then(async (source) => {
 			for await (const event of source) {
