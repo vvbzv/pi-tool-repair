@@ -5,6 +5,8 @@
  * consumed by the Pi extension in src/index.ts.
  */
 
+import type { RepairRecord } from "./records";
+
 export const STRING_CONTENT_KEYS = new Set([
   "content", "command",
   "oldText", "newText",
@@ -19,11 +21,15 @@ export const STRING_CONTENT_KEYS = new Set([
   "path", "name", "title", "subject", "label", "labels",  // text identifiers
   "data",     // process tool stdin (multi-line scripts)
   "script",   // cronjob script content
-  "instructions", "template", "example", "examples",  // generic prose
+  "instructions", "template", "example", "examples", "patch",  // generic prose / patch payloads
   "expression", "statement",  // code/math expressions
   "use_case", "known_fields",  // Composio search prose params
   "output", "source", "target",  // generic text fields
 ]);
+
+function isPathLikeFieldKey(key: string): boolean {
+  return key === "path" || key === "file" || key === "filepath" || key === "file_path";
+}
 
 export function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -35,8 +41,8 @@ export const MAX_DEPTH = 12;
  * Walk a tool args object and apply targeted fixes in place.
  * Returns short descriptions of what was changed.
  */
-export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
-  const fixes: string[] = [];
+export function repairArgs(obj: unknown, path = "$", depth = 0): RepairRecord[] {
+  const fixes: RepairRecord[] = [];
   if (!isObject(obj) || depth > MAX_DEPTH) return fixes;
 
   for (const key of Object.keys(obj)) {
@@ -46,7 +52,7 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
     // 1. Strip null values → delete the key (null ≠ omit for optional fields)
     if (val === null) {
       delete (obj as Record<string, unknown>)[key];
-      fixes.push(`null→omit ${fullPath}`);
+      fixes.push({ type: "null-omit", path: fullPath, stage: "tool-call" });
       continue;
     }
 
@@ -61,7 +67,7 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
           const parsed = JSON.parse(t);
           if (Array.isArray(parsed) || isObject(parsed)) {
             (obj as Record<string, unknown>)[key] = parsed;
-            fixes.push(`json-parse ${fullPath} (${Array.isArray(parsed) ? "array" : "object"})`);
+            fixes.push({ type: "json-parse", path: fullPath, stage: "tool-call", detail: Array.isArray(parsed) ? "array" : "object" });
 
             // Recursively repair the parsed value in the same pass
             if (isObject(parsed)) {
@@ -94,7 +100,8 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
         ).length;
         if (proseCount / lines.length <= 0.4) {
           (obj as Record<string, unknown>)[key] = lines;
-          fixes.push(`split-lines ${fullPath} (${lines.length} items)`);
+          fixes.push({ type: "split-lines", path: fullPath, stage: "tool-call", detail: `${lines.length} items` });
+          continue;
         }
       }
     }
@@ -102,11 +109,12 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
     // 4. Strip accidental Markdown autolinks from file-like paths
     if (
       typeof val === "string" &&
+      isPathLikeFieldKey(key) &&
       /^<[^>]+\.[a-z]{1,6}>$/i.test(val) &&
       val.length < 200
     ) {
       (obj as Record<string, unknown>)[key] = val.slice(1, -1);
-      fixes.push(`strip-md-link ${fullPath}`);
+      fixes.push({ type: "strip-md-link", path: fullPath, stage: "tool-call" });
     }
 
     // 5. Close unclosed braces in truncated JSON strings
@@ -114,7 +122,7 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): string[] {
       const fixed = closeUnclosedBraces(val);
       if (fixed !== val) {
         (obj as Record<string, unknown>)[key] = fixed;
-        fixes.push(`close-braces ${fullPath}`);
+        fixes.push({ type: "close-braces", path: fullPath, stage: "tool-call" });
       }
     }
 
@@ -162,6 +170,6 @@ export function closeUnclosedBraces(s: string): string {
     }
   }
 
-  if (stack.length === 0 || stack.length > 3) return s;
+  if (inString || stack.length === 0 || stack.length > 3) return s;
   return s + stack.reverse().join("");
 }

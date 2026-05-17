@@ -20,50 +20,79 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { RepairRecord } from "./records";
+import { formatRepairRecord } from "./records";
 import { isObject, repairArgs } from "./repair";
+import { repairArgsWithSchema } from "./schema-repair";
+import { buildDoctorReport } from "./doctor";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+const toolSchemas = new Map<string, unknown>();
+
+function refreshToolSchemas(pi: ExtensionAPI) {
+	toolSchemas.clear();
+	for (const tool of pi.getAllTools()) {
+		toolSchemas.set(tool.name, tool.parameters);
+	}
+}
+
 /** Pure helper: apply tool-specific + generic repairs to input. */
 export function repairToolInput(
-  toolName: string,
-  input: Record<string, unknown>,
-): string[] {
-  const fixes: string[] = [];
+	toolName: string,
+	input: Record<string, unknown>,
+	schema?: unknown,
+): RepairRecord[] {
+	const fixes: RepairRecord[] = [];
 
-  if (
-    toolName === "mcp" &&
-    (isObject(input.args) || Array.isArray(input.args))
-  ) {
-    const args = input.args;
+	if (schema) {
+		const repaired = repairArgsWithSchema(input, schema, {
+			stage: "tool-call",
+			toolName,
+		});
+		if (isObject(repaired.value)) {
+			for (const key of Object.keys(input)) delete input[key];
+			Object.assign(input, repaired.value);
+		}
+		fixes.push(...repaired.records);
+	}
 
-    // Repair obj/array args BEFORE stringify — this catches null→omit, etc.
-    if (isObject(args)) {
-      fixes.push(...repairArgs(args, "$.args"));
-    } else {
-      (args as unknown[]).forEach((item, i) => {
-        if (isObject(item)) fixes.push(...repairArgs(item, `$.args[${i}]`));
-      });
-    }
+	if (
+		toolName === "mcp" &&
+		(isObject(input.args) || Array.isArray(input.args))
+	) {
+		const args = input.args;
 
-    const argsType = Array.isArray(args) ? "array" : "object";
-    input.args = JSON.stringify(args);
-    fixes.push(`stringify $.args (${argsType}→JSON)`);
-    return fixes;
-  }
+		// Run generic nested repair as a cleanup pass because MCP args are often
+		// open-shaped objects even when the outer tool schema is known.
+		if (isObject(args)) {
+			fixes.push(...repairArgs(args, "$.args"));
+		} else {
+			(args as unknown[]).forEach((item, i) => {
+				if (isObject(item)) fixes.push(...repairArgs(item, `$.args[${i}]`));
+			});
+		}
 
-  fixes.push(...repairArgs(input));
-  return fixes;
+		const argsType = Array.isArray(args) ? "array" : "object";
+		input.args = JSON.stringify(args);
+		fixes.push({ type: "mcp-args-stringify", path: "$.args", stage: "tool-call", detail: `${argsType}→JSON` });
+		return fixes;
+	}
+
+	if (schema) return fixes;
+
+	fixes.push(...repairArgs(input));
+	return fixes;
 }
 
 interface RepairStats {
-  totalCalls: number;
-  repairedCalls: number;
-  repairs: Record<string, number>;
-  repairTypes: Record<string, number>;
-  lastRepair?: string;
+	totalCalls: number;
+	repairedCalls: number;
+	repairs: Record<string, number>;
+	repairTypes: Record<string, number>;
+	lastRepair?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,16 +100,16 @@ interface RepairStats {
 // ---------------------------------------------------------------------------
 
 function statusLine(stats: RepairStats): string {
-  if (stats.repairedCalls === 0) return "repair: 0 fixes";
-  const top = Object.entries(stats.repairTypes)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([t, n]) => `${t}:${n}`)
-    .join(" ");
-  const last = stats.lastRepair
-    ? ` | ${stats.lastRepair.length > 60 ? stats.lastRepair.slice(0, 60) + "…" : stats.lastRepair}`
-    : "";
-  return `repair: ${stats.repairedCalls}/${stats.totalCalls} (${top})${last}`;
+	if (stats.repairedCalls === 0) return "repair: 0 fixes";
+	const top = Object.entries(stats.repairTypes)
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 3)
+		.map(([t, n]) => `${t}:${n}`)
+		.join(" ");
+	const last = stats.lastRepair
+		? ` | ${stats.lastRepair.length > 60 ? stats.lastRepair.slice(0, 60) + "…" : stats.lastRepair}`
+		: "";
+	return `repair: ${stats.repairedCalls}/${stats.totalCalls} (${top})${last}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,55 +117,79 @@ function statusLine(stats: RepairStats): string {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-  const stats: RepairStats = {
-    totalCalls: 0,
-    repairedCalls: 0,
-    repairs: {},
-    repairTypes: {},
-  };
+	const stats: RepairStats = {
+		totalCalls: 0,
+		repairedCalls: 0,
+		repairs: {},
+		repairTypes: {},
+	};
 
-  // Restore stats from previous sessions
-  pi.on("session_start", async (_event, ctx) => {
-    for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type === "custom" && entry.customType === "pi-tool-repair-stats") {
-        const data = entry.data as RepairStats | undefined;
-        if (data) {
-          stats.totalCalls = data.totalCalls || 0;
-          stats.repairedCalls = data.repairedCalls || 0;
-          stats.repairs = data.repairs || {};
-          stats.repairTypes = data.repairTypes || {};
-        }
-      }
-    }
-    ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
-  });
+	// Restore stats from previous sessions
+	pi.on("session_start", async (_event, ctx) => {
+		refreshToolSchemas(pi);
+		for (const entry of ctx.sessionManager.getEntries()) {
+			if (
+				entry.type === "custom" &&
+				entry.customType === "pi-tool-repair-stats"
+			) {
+				const data = entry.data as RepairStats | undefined;
+				if (data) {
+					stats.totalCalls = data.totalCalls || 0;
+					stats.repairedCalls = data.repairedCalls || 0;
+					stats.repairs = data.repairs || {};
+					stats.repairTypes = data.repairTypes || {};
+				}
+			}
+		}
+		ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
+	});
 
-  pi.on("session_shutdown", async () => {
-    pi.appendEntry("pi-tool-repair-stats", { ...stats });
-  });
+	pi.on("session_shutdown", async () => {
+		pi.appendEntry("pi-tool-repair-stats", { ...stats });
+	});
 
-  // ── Core: intercept every tool call and repair args ────────────────
-  pi.on("tool_call", (event, ctx) => {
-    if (!event.input || typeof event.input !== "object") return;
 
-    stats.totalCalls++;
-    const input = event.input as Record<string, unknown>;
-    const allFixes = repairToolInput(event.toolName, input);
+	pi.registerCommand("repair-doctor", {
+		description: "Inspect active tool schemas and repair compatibility risks",
+		handler: async (_args, _ctx) => {
+			const report = buildDoctorReport({
+				activeTools: pi.getActiveTools(),
+				tools: pi.getAllTools(),
+			});
+			pi.sendMessage(
+				{
+					customType: "pi-tool-repair-doctor",
+					content: report,
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+		},
+	});
+	pi.on("agent_start", () => {
+		refreshToolSchemas(pi);
+	});
 
-    if (allFixes.length > 0) {
-      stats.repairedCalls++;
-      stats.repairs[event.toolName] =
-        (stats.repairs[event.toolName] || 0) + allFixes.length;
+	// ── Core: intercept every tool call and repair args ────────────────
+	pi.on("tool_call", (event, ctx) => {
+		if (!event.input || typeof event.input !== "object") return;
 
-      for (const f of allFixes) {
-        const type = f.split(" ")[0];
-        stats.repairTypes[type] = (stats.repairTypes[type] || 0) + 1;
-      }
+		stats.totalCalls++;
+		const input = event.input as Record<string, unknown>;
+		const allFixes = repairToolInput(event.toolName, input, toolSchemas.get(event.toolName));
 
-      stats.lastRepair = `${event.toolName}: ${allFixes.join(", ")}`;
-    }
+		if (allFixes.length > 0) {
+			stats.repairedCalls++;
+			stats.repairs[event.toolName] =
+				(stats.repairs[event.toolName] || 0) + allFixes.length;
 
-    ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
-  });
+			for (const record of allFixes) {
+				stats.repairTypes[record.type] = (stats.repairTypes[record.type] || 0) + 1;
+			}
 
+			stats.lastRepair = `${event.toolName}: ${allFixes.map(formatRepairRecord).join(", ")}`;
+		}
+
+		ctx.ui.setStatus("pi-tool-repair", statusLine(stats));
+	});
 }

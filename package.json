@@ -19,14 +19,19 @@
     "harness"
   ],
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
   },
   "scripts": {
-    "test": "tsx test-repair.ts",
+    "test": "tsx test-repair.ts && tsx test-schema-repair.ts && tsx test-wrap.ts && tsx test-raw-json.ts && tsx test-doctor.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "dependencies": {
+    "typebox": "1.1.38"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -38,5 +43,8 @@
     "src",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "dependencies": {
+    "typebox": "^1.1.38"
+  }
 }
