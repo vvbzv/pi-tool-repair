@@ -94,13 +94,13 @@ wrap their own `ToolDefinition` with this package's pre-validation helpers.
 ## Installation
 
 ```bash
-pi install git:github.com/yanapattin-source/pi-tool-repair
+pi install git:github.com/vvbzv/pi-tool-repair
 ```
 
 Or manually:
 
 ```bash
-git clone https://github.com/yanapattin-source/pi-tool-repair \
+git clone https://github.com/vvbzv/pi-tool-repair \
   ~/.pi/agent/extensions/pi-tool-repair
 ```
 
@@ -110,18 +110,18 @@ configuration needed.
 ### Remove
 
 ```bash
-pi remove git:github.com/yanapattin-source/pi-tool-repair
+pi remove git:github.com/vvbzv/pi-tool-repair
 ```
 
 If your Pi build still uses the older verb, this is equivalent:
 
 ```bash
-pi uninstall git:github.com/yanapattin-source/pi-tool-repair
+pi uninstall git:github.com/vvbzv/pi-tool-repair
 ```
 
 ---
 
-## The five repair passes
+## Runtime repair passes
 
 ### 1. `null→omit` — Null value stripping
 
@@ -303,6 +303,29 @@ on specific tools indicate the model struggles with that tool's schema
 per-repair-type counts internally. These are accessible via the stats
 entry in the session (custom type `pi-tool-repair-stats`).
 
+
+## Public API
+
+The repository now ships two layers:
+
+- **Runtime Pi extension** — post-validation `tool_call` cleanup, MCP arg
+  normalization, footer stats, and `/repair-doctor`
+- **Reusable repair helpers** — opt-in pre-validation functions for tool authors
+
+Current exports from `src/api.ts`:
+
+- `withToolRepair()` — wraps a Pi `ToolDefinition` and repairs arguments in
+  `prepareArguments`
+- `repairArgsWithSchema()` — schema-aware repair for object/array/scalar/path
+  mismatches
+- `repairRawJsonObject()` — conservative raw JSON string repair for provider or
+  Pi-core integration
+- `repairArgs()` — generic heuristic fallback used by the runtime hook
+- `formatRepairRecord()` and repair record types
+
+Use the exported helpers when you own the tool definition and need
+validation-blocking failures repaired before Pi validates arguments.
+
 ---
 
 ## Compatibility
@@ -428,23 +451,29 @@ Future versions may add a config file at
 
 ## Testing
 
-### Unit tests (standalone, no Pi required)
+### Full local test suite
 
 ```bash
 cd pi-tool-repair
 npm test
+npm run typecheck
 ```
 
-Runs the repair regression suite covering all repair passes, nested
-repairs, and false-positive guards.
+Current coverage includes:
+
+- heuristic runtime repair regressions
+- schema-aware repair behavior
+- `withToolRepair()` wrapper behavior
+- raw JSON repair cases
+- `/repair-doctor` command behavior
 
 ### Integration test (in Pi)
 
-1. Start Pi with DeepSeek or another open model
+1. Start Pi with DeepSeek, Kimi, or another model that occasionally emits weak
+   tool arguments
 2. Ask: "read the file package.json and list all dependencies"
-3. Watch the Pi footer for `repair:` counter ticking up
-4. If the model emits null on optional fields or stringified arrays,
-   you'll see live repairs
+3. Watch the Pi footer for `repair:` counter updates
+4. Run `/repair-doctor` to inspect active tool schemas and compatibility risks
 
 ### Stress test
 
@@ -475,14 +504,12 @@ show 15-30% of tool calls needing at least one fix.
 - **Does not fix semantic errors.** If the model calls `read` on the
   wrong file path, repair won't correct it. We only fix structural
   contract violations (null/missing fields, type mismatches).
-- **Heuristic repair, not schema-guided validation.** The extension
-  avoids known content-bearing string fields, but unknown tools with
-  unusual schemas may still need a future per-tool allowlist or
-  schema-aware repair path.
-- **Generic fallback is still heuristic.** The `tool_call` hook uses safe
-  content-key guards, but unknown open-shaped fields may still need
-  tool-specific protection. Pre-validation helpers (`withToolRepair()` and
-  `repairArgsWithSchema()`) are the schema-aware path.
+- **Post-validation fallback is heuristic.** The runtime `tool_call` hook
+  protects known content-bearing string fields, but unknown tools with
+  open-shaped fields may still need tool-specific protection.
+- **Schema-aware helpers are opt-in.** `withToolRepair()` and
+  `repairArgsWithSchema()` only run for tools that call them (or for tool
+  schemas the runtime extension can already see).
 - **Split-lines is heuristic.** Converting `"a\nb"` to `["a","b"]` is
   a guess based on common failure patterns. If the tool genuinely
   expects a multi-line string and its field name is not protected, this
@@ -497,7 +524,7 @@ show 15-30% of tool calls needing at least one fix.
 
 ## Contributing
 
-The source repo is at `github.com/yanapattin-source/pi-tool-repair`.
+The source repo is at `github.com/vvbzv/pi-tool-repair`.
 
 To add a new repair pass:
 
