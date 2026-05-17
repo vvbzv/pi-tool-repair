@@ -15,16 +15,28 @@
  *
  * All repairs are logged and surfaced as a compact footer status line.
  *
- * Install:  pi install git:github.com/yanapattin-source/pi-tool-repair
+ * Install:  pi install git:github.com/vvbzv/pi-tool-repair
  *           or copy this folder into ~/.pi/agent/extensions/
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import type { RepairedProviderInstallStatus } from "./provider-install";
 import type { RepairRecord } from "./records";
+import { buildDoctorReport } from "./doctor";
+import {
+	bootstrapInstallOllamaCloudRepairProvider,
+	bootstrapInstallOpencodeGoRepairProvider,
+	formatRepairedProviderInstallStatus,
+	installOllamaCloudRepairProvider,
+	installOpencodeGoRepairProvider,
+} from "./provider-install";
 import { formatRepairRecord } from "./records";
 import { isObject, repairArgs } from "./repair";
 import { repairArgsWithSchema } from "./schema-repair";
-import { buildDoctorReport } from "./doctor";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,7 +128,11 @@ function statusLine(stats: RepairStats): string {
 // Extension entry point
 // ---------------------------------------------------------------------------
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
+	const latestProviderStatuses: RepairedProviderInstallStatus[] = [
+		await bootstrapInstallOpencodeGoRepairProvider(pi),
+		await bootstrapInstallOllamaCloudRepairProvider(pi),
+	];
 	const stats: RepairStats = {
 		totalCalls: 0,
 		repairedCalls: 0,
@@ -124,9 +140,42 @@ export default function (pi: ExtensionAPI) {
 		repairTypes: {},
 	};
 
+	const syncSelectedRepairedModel = async (
+		ctx: ExtensionContext | ExtensionCommandContext,
+		statuses: RepairedProviderInstallStatus[],
+	) => {
+		const currentModel = ctx.model;
+		if (!currentModel) return;
+		if (!statuses.some((status) => status.provider === currentModel.provider && status.registered)) return;
+		const refreshed = ctx.modelRegistry
+			.getAvailable()
+			.find((model) => model.provider === currentModel.provider && model.id === currentModel.id);
+		if (!refreshed) return;
+		if (refreshed === currentModel) return;
+		await pi.setModel(refreshed);
+	};
+
+	const refreshRepairProviders = async (
+		ctx: ExtensionContext | ExtensionCommandContext,
+	) => {
+		const statuses = await Promise.all([
+			installOpencodeGoRepairProvider(pi, ctx),
+			installOllamaCloudRepairProvider(pi, ctx),
+		]);
+		latestProviderStatuses.splice(0, latestProviderStatuses.length, ...statuses);
+		await syncSelectedRepairedModel(ctx, statuses);
+		if (ctx.hasUI) {
+			for (const status of statuses) {
+				ctx.ui.notify(formatRepairedProviderInstallStatus(status), status.registered ? "info" : "warning");
+			}
+		}
+		return statuses;
+	};
+
 	// Restore stats from previous sessions
 	pi.on("session_start", async (_event, ctx) => {
 		refreshToolSchemas(pi);
+		await refreshRepairProviders(ctx);
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (
 				entry.type === "custom" &&
@@ -155,6 +204,7 @@ export default function (pi: ExtensionAPI) {
 			const report = buildDoctorReport({
 				activeTools: pi.getActiveTools(),
 				tools: pi.getAllTools(),
+				providerStatuses: latestProviderStatuses,
 			});
 			pi.sendMessage(
 				{
@@ -164,6 +214,13 @@ export default function (pi: ExtensionAPI) {
 				},
 				{ triggerTurn: false },
 			);
+		},
+	});
+
+	pi.registerCommand("repair-provider-refresh", {
+		description: "Refresh repaired sibling providers mirrored from Pi's current model registry",
+		handler: async (_args, ctx) => {
+			await refreshRepairProviders(ctx);
 		},
 	});
 	pi.on("agent_start", () => {

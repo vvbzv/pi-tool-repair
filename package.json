@@ -1,12 +1,12 @@
 {
   "name": "@yanapattin-source/pi-tool-repair",
   "version": "0.1.3",
-  "description": "Validate-then-repair middleware for Pi agent tool calls — fixes common open-model tool use mistakes before execution",
+  "description": "Schema-aware compatibility layer for Pi agent tool calls with post-validation repair and opt-in pre-validation helpers",
   "license": "MIT",
   "author": "yanapattin-source",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yanapattin-source/pi-tool-repair"
+    "url": "https://github.com/vvbzv/pi-tool-repair"
   },
   "keywords": [
     "pi-agent",
@@ -24,14 +24,15 @@
     ]
   },
   "scripts": {
-    "test": "tsx test-repair.ts && tsx test-schema-repair.ts && tsx test-wrap.ts && tsx test-raw-json.ts && tsx test-doctor.ts",
+    "test": "tsx test-repair.ts && tsx test-schema-repair.ts && tsx test-wrap.ts && tsx test-raw-json.ts && tsx test-provider-shim.ts && tsx test-provider-install.ts && tsx test-doctor.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "dependencies": {
-    "typebox": "1.1.38"
+    "@earendil-works/pi-ai": "^0.74.0",
+    "typebox": "^1.1.38"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -43,8 +44,5 @@
     "src",
     "README.md",
     "LICENSE"
-  ],
-  "dependencies": {
-    "typebox": "^1.1.38"
-  }
+  ]
 }

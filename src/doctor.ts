@@ -1,3 +1,4 @@
+import type { RepairedProviderInstallStatus } from "./provider-install";
 import { propertySchema, schemaView } from "./schema";
 
 interface DoctorSourceInfo {
@@ -15,6 +16,7 @@ export interface DoctorToolInfo {
 export interface DoctorInput {
 	activeTools: string[];
 	tools: DoctorToolInfo[];
+	providerStatuses: RepairedProviderInstallStatus[];
 }
 
 interface ToolRisk {
@@ -63,6 +65,27 @@ function bulletList(values: string[]): string {
 	return values.map((value) => `  - ${value}`).join("\n");
 }
 
+function isBaseProviderAvailable(status: RepairedProviderInstallStatus): boolean {
+	return status.registered || status.modelCount > 0;
+}
+
+function formatAuthStatus(status: RepairedProviderInstallStatus): string {
+	if (status.authConfigured) {
+		return status.authSource ? `yes (${status.authSource})` : "yes";
+	}
+	return "no";
+}
+
+function formatSkipReason(status: RepairedProviderInstallStatus): string | undefined {
+	if (status.reason === "missing-auth") {
+		return `${status.baseProvider} has no configured API key in Pi or its fallback environment variable`;
+	}
+	if (status.reason === "missing-models") {
+		return `${status.baseProvider} is unavailable or has no mirrorable openai-completions models`;
+	}
+	return undefined;
+}
+
 export function buildDoctorReport(input: DoctorInput): string {
 	const active = new Set(input.activeTools);
 	const activeTools = input.tools.filter((tool) => active.has(tool.name));
@@ -99,10 +122,36 @@ export function buildDoctorReport(input: DoctorInput): string {
 		}
 	}
 
+	lines.push("", "## Provider shims");
+	if (input.providerStatuses.length === 0) {
+		lines.push("", "No repaired sibling providers have been checked yet. Run `/repair-provider-refresh`.");
+	} else {
+		for (const status of input.providerStatuses) {
+			lines.push(
+				"",
+				`### \`${status.provider}\``,
+				`- Base provider: \`${status.baseProvider}\``,
+				`- Base provider available: ${isBaseProviderAvailable(status) ? "yes" : "no"}`,
+				`- Repaired provider: \`${status.provider}\``,
+				`- Registered: ${status.registered ? "yes" : "no"}`,
+				`- Auth configured: ${formatAuthStatus(status)}`,
+				`- Mirrored model count: ${status.modelCount}`,
+			);
+			const skipReason = formatSkipReason(status);
+			if (skipReason) {
+				lines.push(`- Skip reason: ${skipReason}`);
+			}
+			if (status.baseProvider === "ollama-cloud") {
+				lines.push("- Note: requires `pi-ollama-cloud` to be installed and registered first; run `/repair-provider-refresh` after its model list changes.");
+			}
+		}
+	}
+
 	lines.push(
 		"",
 		"## Notes",
 		"",
+		"- `/repair-provider-refresh` re-runs repaired sibling provider registration against Pi's current model registry.",
 		"- MCP gateway args are normalized back to a JSON string at execution time when container-shaped args reach this extension.",
 		"- This report inspects advertised schemas, not live `prepareArguments` implementations.",
 		"- String fields are intentionally preserved unless they are path-like Markdown autolinks such as `<src/file.ts>`.",

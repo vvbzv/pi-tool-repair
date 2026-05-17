@@ -119,6 +119,14 @@ If your Pi build still uses the older verb, this is equivalent:
 pi uninstall git:github.com/vvbzv/pi-tool-repair
 ```
 
+### Repaired sibling providers
+
+- `opencode-go-repair` mirrors Pi's built-in `opencode-go` models through the same upstream backend and credentials.
+- `ollama-cloud-repair` mirrors the runtime `ollama-cloud` model registry through the same upstream backend and credentials.
+- `ollama-cloud-repair` only appears when `pi-ollama-cloud` is installed, registered, and currently exposing `openai-completions` models.
+- Run `/repair-provider-refresh` after `pi-ollama-cloud` changes its available models or credentials.
+
+
 ---
 
 ## Runtime repair passes
@@ -309,7 +317,7 @@ entry in the session (custom type `pi-tool-repair-stats`).
 The repository now ships two layers:
 
 - **Runtime Pi extension** — post-validation `tool_call` cleanup, MCP arg
-  normalization, footer stats, and `/repair-doctor`
+  normalization, footer stats, `/repair-doctor`, and `/repair-provider-refresh`
 - **Reusable repair helpers** — opt-in pre-validation functions for tool authors
 
 Current exports from `src/api.ts`:
@@ -371,18 +379,28 @@ extension-registered tools, and MCP-proxied tools. Calls rejected earlier by
 Pi validation need pre-validation integration through `prepareArguments`, a
 tool wrapper, or future Pi/provider support.
 
-## Doctor command
+## Doctor and provider commands
 
-Run this inside Pi:
+Run these inside Pi:
 
 ```text
 /repair-doctor
+/repair-provider-refresh
 ```
 
-It inspects the currently active tools, highlights object/array/numeric/boolean
-argument shapes that are more likely to need repair, reports whether an MCP
-gateway is active, and reminds you that Pi does not expose third-party
-`prepareArguments` implementations for direct inspection.
+`/repair-doctor` inspects the currently active tools, highlights
+object/array/numeric/boolean argument shapes that are more likely to need
+repair, reports whether an MCP gateway is active, and includes repaired
+provider shim status for `opencode-go-repair` and `ollama-cloud-repair`.
+
+The provider-shim section reports the base provider, repaired sibling provider,
+registration status, auth source when available, mirrored model count, and skip
+reason when registration fails. `ollama-cloud-repair` depends on
+`pi-ollama-cloud` being installed and registered first.
+
+`/repair-provider-refresh` re-runs repaired sibling provider registration
+against Pi's current model registry so the doctor output matches the latest
+runtime provider state.
 
 
 ## For extension authors
