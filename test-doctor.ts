@@ -1,5 +1,58 @@
 import repairExtension from "./src/index";
 import { buildDoctorReport } from "./src/doctor";
+import {
+	OLLAMA_CLOUD_PROVIDER,
+	OLLAMA_CLOUD_REPAIR_PROVIDER,
+	OPENCODE_GO_PROVIDER,
+	OPENCODE_GO_REPAIR_PROVIDER,
+} from "./src/provider-models";
+
+const runtimeAvailableModels = [
+	{
+		id: "llama-3.3-70b",
+		name: "Llama 3.3 70B",
+		provider: OLLAMA_CLOUD_PROVIDER,
+		api: "openai-completions",
+		baseUrl: "https://ollama.example/v1",
+		reasoning: true,
+		thinkingLevelMap: { low: "low", high: "high" },
+		input: ["text", "image"],
+		cost: { input: 0.42, output: 0.84 },
+		contextWindow: 131072,
+		maxTokens: 8192,
+		headers: { "X-Model": "llama-3.3-70b" },
+		compat: { strictToolCalls: true },
+	},
+] satisfies Array<Record<string, unknown>>;
+
+function createContext(options: {
+	apiKeys?: Record<string, string | undefined>;
+	available?: Array<Record<string, unknown>>;
+} = {}) {
+	return {
+		hasUI: false,
+		cwd: process.cwd(),
+		sessionManager: { getEntries() { return []; } },
+		modelRegistry: {
+			async getApiKeyForProvider(provider: string) {
+				return options.apiKeys?.[provider];
+			},
+			async getAvailable() {
+				return (options.available ?? []) as any[];
+			},
+		},
+		model: undefined,
+		isIdle() { return true; },
+		signal: undefined,
+		abort() {},
+		hasPendingMessages() { return false; },
+		shutdown() {},
+		getContextUsage() { return undefined; },
+		compact() {},
+		getSystemPrompt() { return ""; },
+		ui: { notify() {}, setStatus() {} },
+	} as any;
+}
 
 async function main() {
 	const tools = [
@@ -55,6 +108,25 @@ async function main() {
 	const report = buildDoctorReport({
 		activeTools: ["edit", "mcp"],
 		tools: tools as unknown as any[],
+		providerStatuses: [
+			{
+				baseProvider: OPENCODE_GO_PROVIDER,
+				provider: OPENCODE_GO_REPAIR_PROVIDER,
+				registered: true,
+				modelCount: 5,
+				authConfigured: true,
+				authSource: "registry",
+			},
+			{
+				baseProvider: OLLAMA_CLOUD_PROVIDER,
+				provider: OLLAMA_CLOUD_REPAIR_PROVIDER,
+				registered: false,
+				modelCount: 0,
+				reason: "missing-models",
+				authConfigured: true,
+				authSource: "registry",
+			},
+		],
 	});
 
 	let ok = true;
@@ -68,14 +140,22 @@ async function main() {
 	expect("doctor report flags edit container risk", report.includes("`edit`"));
 	expect("doctor report mentions MCP gateway", report.includes("MCP gateway detected"));
 	expect("doctor report explains wrapper visibility limit", report.includes("cannot verify whether third-party tools already use `prepareArguments`"));
+	expect("doctor report includes provider shim section", report.includes("## Provider shims"));
+	expect("doctor report includes opencode-go-repair status", report.includes(`### \`${OPENCODE_GO_REPAIR_PROVIDER}\``));
+	expect("doctor report reports registry auth source", report.includes("Auth configured: yes (registry)"));
+	expect("doctor report reports auth even when models are unavailable", report.includes("Auth configured: yes (registry)"));
+	expect("doctor report includes ollama-cloud-repair status", report.includes(`### \`${OLLAMA_CLOUD_REPAIR_PROVIDER}\``));
+	expect("doctor report explains missing mirrored models", report.includes("Skip reason: ollama-cloud is unavailable or has no mirrorable openai-completions models"));
+	expect("doctor report mentions repair-provider-refresh", report.includes("/repair-provider-refresh"));
+	expect("doctor report mentions pi-ollama-cloud dependency", report.includes("requires `pi-ollama-cloud` to be installed and registered first"));
 
-	let registered: { name: string; handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
+	const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
 	let sentMessage: { customType: string; content: string; display: boolean } | undefined;
 
-	repairExtension({
+	await repairExtension({
 		on() {},
 		registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
-			registered = { name, handler: options.handler };
+			commands.set(name, options);
 		},
 		registerTool() {},
 		registerShortcut() {},
@@ -103,27 +183,33 @@ async function main() {
 		events: { on() {}, off() {}, once() {}, emit() {} },
 	} as any);
 
-	expect("registers repair-doctor command", registered?.name === "repair-doctor");
-	if (registered) {
-		await registered.handler("", {
-			hasUI: false,
-			cwd: process.cwd(),
-			sessionManager: { getEntries() { return []; } },
-			modelRegistry: {},
-			model: undefined,
-			isIdle() { return true; },
-			signal: undefined,
-			abort() {},
-			hasPendingMessages() { return false; },
-			shutdown() {},
-			getContextUsage() { return undefined; },
-			compact() {},
-			getSystemPrompt() { return ""; },
-			ui: { notify() {}, setStatus() {} },
-		} as any);
+	const doctorCommand = commands.get("repair-doctor");
+	const refreshCommand = commands.get("repair-provider-refresh");
+	expect("registers repair-doctor command", typeof doctorCommand?.handler === "function");
+	expect("registers repair-provider-refresh command", typeof refreshCommand?.handler === "function");
+	if (doctorCommand && refreshCommand) {
+		await refreshCommand.handler("", createContext({
+			apiKeys: {
+				[OPENCODE_GO_PROVIDER]: "stored-opencode-key",
+				[OLLAMA_CLOUD_PROVIDER]: "stored-ollama-key",
+			},
+			available: runtimeAvailableModels,
+		}));
+		await doctorCommand.handler("", createContext());
+		expect("doctor command emits message", sentMessage?.customType === "pi-tool-repair-doctor");
+		expect("doctor command emits registered provider details after refresh", sentMessage?.content.includes(`### \`${OLLAMA_CLOUD_REPAIR_PROVIDER}\``) === true);
+		expect("doctor command reports refreshed auth source", sentMessage?.content.includes("Auth configured: yes (registry)") === true);
+
+		await refreshCommand.handler("", createContext({
+			apiKeys: {
+				[OPENCODE_GO_PROVIDER]: "stored-opencode-key",
+				[OLLAMA_CLOUD_PROVIDER]: "stored-ollama-key",
+			},
+		}));
+		await doctorCommand.handler("", createContext());
+		expect("doctor command reflects refreshed skip reason", sentMessage?.content.includes("Skip reason: ollama-cloud is unavailable or has no mirrorable openai-completions models") === true);
+		expect("doctor command emits visible report", sentMessage?.display === true && sentMessage.content.includes("# pi-tool-repair doctor"));
 	}
-	expect("doctor command emits message", sentMessage?.customType === "pi-tool-repair-doctor");
-	expect("doctor command emits visible report", sentMessage?.display === true && sentMessage.content.includes("# pi-tool-repair doctor"));
 
 	process.exit(ok ? 0 : 1);
 }
