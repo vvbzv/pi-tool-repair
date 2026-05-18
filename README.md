@@ -4,6 +4,31 @@
 > Repairs parsed tool input objects at Pi's `tool_call` hook and exposes
 > reusable pre-validation helpers for tool authors.
 
+In plain words: this is a small safety layer for Pi. When a model sends a
+tool call with the right idea but the wrong argument shape, `pi-tool-repair`
+tries to clean the shape before the call reaches the tool. It does **not**
+choose tools for the model or guess semantic intent.
+
+## What is supported now
+
+| Support area | Status | What it means |
+| :--- | :--- | :--- |
+| Runtime extension | ✅ Built in | Repairs tool-call arguments that already passed Pi validation. |
+| Tool author wrapper | ✅ Exported | `withToolRepair()` lets extension authors repair arguments before their own tools validate. |
+| Schema-aware repair | ✅ Exported | Uses a tool's schema to safely parse arrays/objects and coerce simple scalars. |
+| Raw JSON repair | ✅ Exported | `repairRawJsonObject()` fixes small streamed JSON truncation/extra-closer cases for provider or Pi-core integrations. |
+| Repaired providers | ✅ Included | `opencode-go-repair` and `ollama-cloud-repair` mirror base providers with tool-call repair enabled. |
+| Full semantic correction | ❌ Not a goal | Wrong paths, wrong tools, or wrong business meaning still belong to the model/tool. |
+
+## Quick start
+
+```bash
+pi install git:github.com/vvbzv/pi-tool-repair
+```
+
+Then restart Pi or run `/reload`. Use `/repair-doctor` inside Pi to inspect
+active tool schemas and provider-shim status.
+
 ---
 
 ## Why this exists
@@ -41,12 +66,21 @@ Pi, but does not claim benchmark parity with Reasonix.
 
 ## How it works
 
-### The validate-then-repair pattern
+### The three repair entry points
+
+| Entry point | Who uses it | When it runs | What it can fix |
+| :--- | :--- | :--- | :--- |
+| Runtime extension | Everyone who installs the package | Pi's `tool_call` event, after Pi validation | Cleans values that already made it through validation. |
+| `withToolRepair()` | Tool/extension authors | `prepareArguments`, before that tool validates | Repairs validation-blocking shape errors for wrapped tools. |
+| Repaired providers | Users choosing `opencode-go-repair` or `ollama-cloud-repair` | While streaming OpenAI-completions tool calls | Repairs small raw JSON issues before Pi parses the tool call. |
+
 > **Important:** Pi's `tool_call` extension event runs after Pi validates tool
 > arguments. The installed extension can repair already-validated objects and
 > keep later extensions consistent, but validation-blocking failures require a
-> tool-level `prepareArguments` wrapper or a Pi/provider pre-validation hook.
+> tool-level `prepareArguments` wrapper, a provider shim, or a future Pi-core
+> pre-validation hook.
 
+### Runtime validate-then-repair flow
 
 ```
 Model emits tool call
@@ -121,11 +155,28 @@ pi uninstall git:github.com/vvbzv/pi-tool-repair
 
 ### Repaired sibling providers
 
-- `opencode-go-repair` mirrors Pi's built-in `opencode-go` models through the same upstream backend and credentials.
-- `ollama-cloud-repair` mirrors the runtime `ollama-cloud` model registry through the same upstream backend and credentials.
-- `ollama-cloud-repair` only appears when `pi-ollama-cloud` is installed, registered, and currently exposing `openai-completions` models.
-- Run `/repair-provider-refresh` after `pi-ollama-cloud` changes its available models or credentials.
+Provider shims are optional model-provider copies. Select a `*-repair` provider
+in Pi when you want raw streamed tool-call JSON repaired before Pi parses and
+validates it.
 
+| Repaired provider | Mirrors | Requirements | Refresh command |
+| :--- | :--- | :--- | :--- |
+| `opencode-go-repair` | Pi's built-in `opencode-go` models | Same `opencode-go` credentials as the base provider | Usually none |
+| `ollama-cloud-repair` | Runtime `ollama-cloud` models | `pi-ollama-cloud` installed, registered, authenticated, and exposing `openai-completions` tool models | `/repair-provider-refresh` |
+
+The repaired provider uses the same upstream backend and credentials as the base
+provider. It only changes the tool-call handling path; it does not change model
+selection, prompts, or tool schemas.
+
+Credential lookup is deliberately boring and visible:
+
+1. Pi's model registry, when a session context is available.
+2. `~/.pi/agent/auth.json`, during early extension startup.
+3. `~/.pi/agent/models.json`, if provider auth is configured there.
+4. `OPENCODE_API_KEY` or `OLLAMA_API_KEY`, as an environment fallback.
+
+If auth or mirrorable models are missing, the extension skips that repaired
+provider instead of crashing. `/repair-doctor` shows the exact skip reason.
 
 ---
 
@@ -311,13 +362,15 @@ on specific tools indicate the model struggles with that tool's schema
 per-repair-type counts internally. These are accessible via the stats
 entry in the session (custom type `pi-tool-repair-stats`).
 
-
 ## Public API
 
-The repository now ships two layers:
+The repository now ships three layers:
 
 - **Runtime Pi extension** — post-validation `tool_call` cleanup, MCP arg
   normalization, footer stats, `/repair-doctor`, and `/repair-provider-refresh`
+- **Repaired provider shims** — optional `opencode-go-repair` and
+  `ollama-cloud-repair` providers that clean raw streamed tool-call JSON before
+  Pi parses it
 - **Reusable repair helpers** — opt-in pre-validation functions for tool authors
 
 Current exports from `src/api.ts`:
@@ -333,6 +386,22 @@ Current exports from `src/api.ts`:
 
 Use the exported helpers when you own the tool definition and need
 validation-blocking failures repaired before Pi validates arguments.
+
+### Provider shim API
+
+The provider layer is also reusable, but most users should not call it directly.
+It exists so Pi can register repaired sibling providers that share the same
+models and credentials as their base provider.
+
+| Export | Purpose |
+| :--- | :--- |
+| `streamSimpleOpenAICompletionsWithRepair` | Wraps OpenAI-completions streaming and repairs tool-call arguments for registered repaired providers. |
+| `registerRepairedOpenAICompletionsProvider(provider)` | Marks a provider name as repair-enabled. |
+| `unregisterRepairedOpenAICompletionsProvider(provider)` | Removes a provider name from the repair-enabled set. |
+| `mirrorBuiltInProviderModels()` / `mirrorRuntimeProviderModels()` | Copy model metadata from a base provider to a repaired sibling provider. |
+
+The stream wrapper only changes tool-call argument handling for provider names
+registered as repaired. Non-repaired providers pass through unchanged.
 
 ---
 
@@ -388,20 +457,16 @@ Run these inside Pi:
 /repair-provider-refresh
 ```
 
-`/repair-doctor` inspects the currently active tools, highlights
-object/array/numeric/boolean argument shapes that are more likely to need
-repair, reports whether an MCP gateway is active, and includes repaired
-provider shim status for `opencode-go-repair` and `ollama-cloud-repair`.
+Use `/repair-doctor` first. It prints a plain report with:
 
-The provider-shim section reports the base provider, repaired sibling provider,
-registration status, auth source when available, mirrored model count, and skip
-reason when registration fails. `ollama-cloud-repair` depends on
-`pi-ollama-cloud` being installed and registered first.
+- active tools that have object, array, number, integer, or boolean arguments
+- whether an MCP gateway tool is active
+- whether `opencode-go-repair` and `ollama-cloud-repair` are registered
+- why a repaired provider was skipped, such as missing auth or missing models
 
-`/repair-provider-refresh` re-runs repaired sibling provider registration
-against Pi's current model registry so the doctor output matches the latest
-runtime provider state.
-
+Use `/repair-provider-refresh` after changing provider credentials or after
+`pi-ollama-cloud` refreshes its model list. The command re-checks Pi's current
+model registry and updates the repaired sibling providers.
 
 ## For extension authors
 
@@ -483,7 +548,8 @@ Current coverage includes:
 - schema-aware repair behavior
 - `withToolRepair()` wrapper behavior
 - raw JSON repair cases
-- `/repair-doctor` command behavior
+- repaired provider stream and registration behavior
+- `/repair-doctor` and `/repair-provider-refresh` command behavior
 
 ### Integration test (in Pi)
 
@@ -528,6 +594,11 @@ show 15-30% of tool calls needing at least one fix.
 - **Schema-aware helpers are opt-in.** `withToolRepair()` and
   `repairArgsWithSchema()` only run for tools that call them (or for tool
   schemas the runtime extension can already see).
+- **Provider shims are opt-in and provider-specific.** They only appear when
+  the base provider has usable auth and mirrorable models. If setup is missing,
+  `/repair-doctor` reports the skip reason instead of failing silently.
+- **Raw JSON repair is conservative.** It handles small extra closers or a few
+  missing closers. It does not try to rebuild heavily corrupted tool-call JSON.
 - **Split-lines is heuristic.** Converting `"a\nb"` to `["a","b"]` is
   a guess based on common failure patterns. If the tool genuinely
   expects a multi-line string and its field name is not protected, this
@@ -537,6 +608,9 @@ show 15-30% of tool calls needing at least one fix.
   reasoning problem, not a contract problem.
 - **Stats reset on fresh install.** Session-persisted stats are tied
   to the Pi session. A new session starts with fresh counters.
+- **Provider shims assume OpenAI-completions-style tool streaming.** They are
+  meant for providers that expose compatible tool-call events. Other provider
+  APIs still depend on the runtime hook or future integration work.
 
 ---
 
@@ -548,8 +622,8 @@ To add a new repair pass:
 
 1. Add the detection + fix logic to the `repairArgs` function in
    `src/repair.ts`
-2. Add test cases to `test-repair.ts`
-3. Run the tests: `npx tsx test-repair.ts`
+2. Add test cases to the relevant `test-*.ts` file
+3. Run `npm test` and `npm run typecheck`
 4. Submit a PR
 
 Good candidates for new passes:
@@ -557,6 +631,8 @@ Good candidates for new passes:
 - Pi/provider pre-validation integration for built-in tools
 - Additional MCP-aware protections for unknown open-shaped `args`
 - Nested null cleanup inside arrays of objects
+- Additional repaired sibling providers once their stream API and auth path are
+  confirmed
 
 ---
 
