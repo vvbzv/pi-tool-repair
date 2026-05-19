@@ -43,13 +43,16 @@ capable at _reasoning_ about what tool to call and what arguments to pass
 — but they lack the same volume of schema-constrained training. The
 result is predictable, repeatable failure modes:
 
-| Failure mode            | Example                                                     | Why it happens                                 |
-| ----------------------- | ----------------------------------------------------------- | ---------------------------------------------- |
-| Null on optional fields | `{path: "/x", limit: null}`                                 | Model emits null instead of omitting the key   |
-| Stringified JSON        | `{edits: "[{\"a\":1}]"}`                                    | Model double-encodes structured data           |
-| Container mismatch      | `"src/a.ts\nsrc/b.ts"` instead of `["src/a.ts","src/b.ts"]` | Model emits a flat string for a list parameter |
-| Markdown autolinks      | `"<src/utils.ts>"`                                          | Model applies prose formatting to code paths   |
-| Truncated JSON          | `{"path":"/x","edi`                                         | Streaming cutoff leaves unclosed braces        |
+| Failure mode            | Example                                                     | Why it happens                                      |
+| ----------------------- | ----------------------------------------------------------- | --------------------------------------------------- |
+| Null on optional fields | `{path: "/x", limit: null}`                                 | Model emits null instead of omitting the key        |
+| Stringified JSON        | `{edits: "[{\"a\":1}]"}`                                    | Model double-encodes structured data                |
+| Loose array literal     | `{paths: "['a.ts', 'b.ts']"}`                               | Model emits Python/Markdown-looking arrays          |
+| Container mismatch      | `"src/a.ts\nsrc/b.ts"` instead of `["src/a.ts","src/b.ts"]` | Model emits a flat string for a list parameter      |
+| Empty object for array  | `{paths: {}}` where `paths` should be `[]`                   | Model chooses a generic empty container             |
+| Markdown links          | `"[notes.md](https://...)"`                                 | Model applies prose formatting to code paths        |
+| Relational defaults     | `{path:"README.md", limit: 20}` without `offset`           | Model satisfies one related field but omits another |
+| Truncated JSON          | `{"path":"/x","edi`                                         | Streaming cutoff leaves unclosed braces             |
 
 These are **harness problems, not model problems.** The model knows the
 right answer — it just violates the strict contract that the tool schema
@@ -91,8 +94,12 @@ Model emits tool call
   │     ├─ null?   → delete key (omit, don't send null)
   │     ├─ "[..."? → JSON.parse into real array
   │     ├─ "{..."? → JSON.parse into real object
-  │     ├─ "a\nb"? → split into string array
-  │     ├─ <path>? → strip angle brackets
+  │     ├─ "['a']"? → parse loose single-quoted string array
+  │     ├─ "a\nb"?  → split into string array
+  │     ├─ {} where array schema? → use []
+  │     ├─ "a" where string[] schema? → use ["a"]
+  │     ├─ <path> or [path](url)? → strip Markdown wrapper
+  │     ├─ read limit without offset? → add offset: 1
   │     └─ open {? → close unclosed braces
   │
   ├─► Mutate event.input in-place
@@ -210,7 +217,9 @@ not a string that happens to contain JSON.
 
 **Fix:** Detect strings starting with `[` or `{`, attempt `JSON.parse`.
 If successful and the result is an array or object, replace the string
-with the parsed value.
+with the parsed value. If JSON parsing fails but the value is a simple
+single-quoted string array like `['a.ts', 'b.ts']`, parse it as a string
+array.
 
 ```typescript
 // Before (model output)
@@ -225,8 +234,11 @@ with the parsed value.
 ```
 
 **Safety:** Only applies when the string is ≥3 characters and starts
-with bracket/brace. Invalid JSON is left alone. Short strings like
-`"{}"` (2 chars) are never parsed — too risky for false positives.
+with bracket/brace. Invalid JSON is left alone unless it is a conservative
+quoted-string array. Short strings like `"{}"` (2 chars) are never parsed
+by the generic runtime pass — too risky for false positives. The
+schema-aware pre-validation helper can still turn `{}` or `"{}"` into
+`[]` when the tool schema explicitly expects an array.
 
 **Content safety (v0.1.3):** The `STRING_CONTENT_KEYS` set (shared with
 split-lines) prevents json-parse from converting code/text params that
@@ -283,20 +295,20 @@ regex-like brackets, JSON-looking examples, or prose are intentional.
 **Safety:** Only fires when ≥2 non-empty lines exist. Single-line
 strings with trailing newlines are unaffected. Empty strings are skipped.
 
-### 4. `strip-md-link` — Markdown autolink removal
+### 4. `strip-md-link` — Markdown path wrapper removal
 
 **Problem:** Models trained on large corpora of Markdown sometimes treat
-file paths as Markdown autolinks, wrapping them in angle brackets.
-`<src/utils.ts>` is valid Markdown but not a valid file path.
+file paths as Markdown, wrapping them in angle brackets or full links.
+`<src/utils.ts>` and `[notes.md](https://example.test/notes)` are valid
+Markdown but not valid file paths.
 
-**Fix:** Detect strings matching the pattern `<text.extension>` (angle
-brackets around what looks like a filename with extension). Strip the
-brackets.
+**Fix:** Detect path fields matching `<text.extension>` or
+`[text.extension](url)` and keep the path-looking text.
 
 ```typescript
 // Before (model output)
 {
-  path: "<src/components/Button.tsx>"
+  path: "[src/components/Button.tsx](https://example.test/Button)"
 }
 
 // After (repaired)
@@ -306,10 +318,54 @@ brackets.
 ```
 
 **Safety:** Only matches strings under 200 characters with a file-like
-extension (1-6 letter extension after a dot). Won't match generic angle
-bracket usage like `<T>` or XML tags.
+extension/path and only for path-like fields (`path`, `file`, `paths`,
+`file_paths`, etc. in schema-aware repair). Won't match generic angle
+bracket usage like `<T>`, XML tags, emails, URLs, commands, or prose
+messages.
 
-### 5. `close-braces` — Truncated JSON repair
+### 5. `schema containers` — Empty object and bare string array repair
+
+**Problem:** For `string[]` parameters, models sometimes send `{}` for an
+empty list or a bare string for a one-item list.
+
+**Fix:** In schema-aware repair, convert `{}` or `"{}"` to `[]` only when
+the schema expects an array, and convert a non-empty bare string to a
+single-item string array only when the schema expects `string[]`.
+
+```typescript
+// Before (model output)
+{ paths: "src/only.ts" }
+
+// After (schema-aware repaired)
+{ paths: ["src/only.ts"] }
+```
+
+**Safety:** This is schema-gated. Generic post-validation repair does not
+wrap arbitrary strings into arrays because that would corrupt normal text
+fields.
+
+### 6. `relation-default` — Known relational field defaults
+
+**Problem:** Some tool schemas have fields that only make sense together.
+For Pi's `read`/`ctx_read`-style schemas, a model may provide `limit`
+without `offset`.
+
+**Fix:** In schema-aware repair, when the tool is `read` or `ctx_read`, the
+schema has numeric `limit` and `offset` fields, `limit` is present, and
+`offset` is missing, add `offset: 1`.
+
+```typescript
+// Before (model output)
+{ path: "README.md", limit: "20" }
+
+// After (schema-aware repaired)
+{ path: "README.md", limit: 20, offset: 1 }
+```
+
+**Safety:** This is deliberately narrow and tool-name-gated. The repair
+layer does not invent arbitrary relational defaults for unknown tools.
+
+### 7. `close-braces` — Truncated JSON repair
 
 **Problem:** During streaming, model output can be truncated mid-JSON.
 The last chunk arrives with unclosed braces or brackets. Most tool

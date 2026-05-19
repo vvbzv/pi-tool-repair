@@ -1,5 +1,10 @@
 import type { RepairRecord, RepairStage } from "./records";
-import { STRING_CONTENT_KEYS, closeUnclosedBraces } from "./repair";
+import {
+	STRING_CONTENT_KEYS,
+	closeUnclosedBraces,
+	parseLooseStringArray,
+	stripMarkdownFileReference,
+} from "./repair";
 import { isOptionalProperty, isStringArraySchema, propertySchema, schemaView } from "./schema";
 
 export interface SchemaRepairOptions {
@@ -22,7 +27,7 @@ function safeJsonContainerParse(value: string): unknown | undefined {
 		const parsed = JSON.parse(trimmed);
 		return parsed && typeof parsed === "object" ? parsed : undefined;
 	} catch {
-		return undefined;
+		return parseLooseStringArray(trimmed);
 	}
 }
 
@@ -51,18 +56,42 @@ function safeBoolean(value: string): boolean | undefined {
 	return undefined;
 }
 
-function stripMarkdownAutolink(value: string, path: string): string | undefined {
-	const key = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-	if (key !== "path" && key !== "filepath" && key !== "file_path" && key !== "file") return undefined;
-	if (value.length >= 200) return undefined;
-	if (!/^<[^>]+\.[a-z]{1,6}>$/i.test(value)) return undefined;
-	if (/^<[a-z][a-z0-9+.-]*:/i.test(value) || /^<[^@\s<>]+@[^@\s<>]+>$/i.test(value)) return undefined;
-	return value.slice(1, -1);
-}
-
 function pathKey(path: string): string {
 	const lastDot = path.lastIndexOf(".");
-	return lastDot === -1 ? path : path.slice(lastDot + 1);
+	const key = lastDot === -1 ? path : path.slice(lastDot + 1);
+	return key.replace(/\[\d+\]$/, "").toLowerCase();
+}
+
+function isPathLikeRepairKey(key: string): boolean {
+	return key === "path" ||
+		key === "paths" ||
+		key === "file" ||
+		key === "files" ||
+		key === "filepath" ||
+		key === "filepaths" ||
+		key === "file_path" ||
+		key === "file_paths";
+}
+
+function stripMarkdownAutolink(value: string, path: string): string | undefined {
+	if (!isPathLikeRepairKey(pathKey(path))) return undefined;
+	return stripMarkdownFileReference(value);
+}
+
+function shouldDefaultOffset(
+	output: Record<string, unknown>,
+	schema: unknown,
+	options: SchemaRepairOptions,
+): boolean {
+	const toolName = (options.toolName ?? "").toLowerCase();
+	if (toolName !== "read" && toolName !== "ctx_read") return false;
+	if (!Object.prototype.hasOwnProperty.call(output, "limit")) return false;
+	if (Object.prototype.hasOwnProperty.call(output, "offset")) return false;
+	if (typeof output.limit !== "number") return false;
+	const limitKind = schemaView(propertySchema(schema, "limit")).kind;
+	const offsetKind = schemaView(propertySchema(schema, "offset")).kind;
+	if (limitKind !== "number" && limitKind !== "integer") return false;
+	return offsetKind === "number" || offsetKind === "integer";
 }
 
 function repairRecord(
@@ -95,20 +124,46 @@ export function repairArgsWithSchema<T = unknown>(
 		if (view.kind === "array" || view.kind === "object") {
 			const parsed = safeJsonContainerParse(value);
 			if (parsed !== undefined) {
-				if (view.kind === "array" && !Array.isArray(parsed)) return { value, records };
-				if (view.kind === "object" && (Array.isArray(parsed) || parsed === null || typeof parsed !== "object")) return { value, records };
-				records.push(repairRecord("json-parse", path, options, Array.isArray(parsed) ? "array" : "object"));
+				if (view.kind === "array") {
+					if (Array.isArray(parsed)) {
+						records.push(repairRecord("json-parse", path, options, "array"));
+						const repaired = repairArgsWithSchema(parsed as T, schema, options);
+						records.push(...repaired.records);
+						return { value: repaired.value, records };
+					}
+					if (parsed && typeof parsed === "object" && Object.keys(parsed as Record<string, unknown>).length === 0) {
+						records.push(repairRecord("empty-object-array", path, options));
+						return { value: [] as T, records };
+					}
+					return { value, records };
+				}
+
+				if (Array.isArray(parsed) || parsed === null || typeof parsed !== "object") return { value, records };
+				records.push(repairRecord("json-parse", path, options, "object"));
 				const repaired = repairArgsWithSchema(parsed as T, schema, options);
 				records.push(...repaired.records);
 				return { value: repaired.value, records };
 			}
 		}
 
-		if (isStringArraySchema(schema) && value.includes("\n")) {
-			const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
-			if (lines.length > 1) {
-				records.push(repairRecord("split-lines", path, options, `${lines.length} items`));
-				return { value: lines as T, records };
+		if (isStringArraySchema(schema)) {
+			if (value.includes("\n")) {
+				const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
+				if (lines.length > 1) {
+					records.push(repairRecord("split-lines", path, options, `${lines.length} items`));
+					return { value: lines as T, records };
+				}
+			}
+
+			const unlinked = stripMarkdownAutolink(value, path);
+			if (unlinked !== undefined) {
+				records.push(repairRecord("strip-md-link", path, options));
+				return { value: [unlinked] as T, records };
+			}
+
+			if (value.trim().length > 0 && !STRING_CONTENT_KEYS.has(pathKey(path))) {
+				records.push(repairRecord("wrap-string-array", path, options, "1 item"));
+				return { value: [value] as T, records };
 			}
 		}
 
@@ -174,7 +229,14 @@ export function repairArgsWithSchema<T = unknown>(
 		return { value: repaired as T, records };
 	}
 
-	if (value && typeof value === "object" && view.kind === "object") {
+	if (value && typeof value === "object" && !Array.isArray(value) && view.kind === "array") {
+		if (Object.keys(value as Record<string, unknown>).length === 0) {
+			records.push(repairRecord("empty-object-array", path, options));
+			return { value: [] as T, records };
+		}
+	}
+
+	if (value && typeof value === "object" && !Array.isArray(value) && view.kind === "object") {
 		const output: Record<string, unknown> = { ...(value as Record<string, unknown>) };
 		for (const key of Object.keys(output)) {
 			const childSchema = propertySchema(schema, key);
@@ -189,6 +251,10 @@ export function repairArgsWithSchema<T = unknown>(
 			} else {
 				output[key] = child.value;
 			}
+		}
+		if (shouldDefaultOffset(output, schema, options)) {
+			output.offset = 1;
+			records.push(repairRecord("relation-default", `${path}.offset`, options, "limit→offset=1"));
 		}
 		return { value: output as T, records };
 	}

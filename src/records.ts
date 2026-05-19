@@ -4,9 +4,12 @@ export type RepairType =
 	| "null-omit"
 	| "json-parse"
 	| "split-lines"
+	| "wrap-string-array"
+	| "empty-object-array"
 	| "strip-md-link"
 	| "close-braces"
 	| "scalar-coerce"
+	| "relation-default"
 	| "mcp-args-stringify";
 
 export interface RepairRecord {
@@ -23,6 +26,12 @@ function displayType(type: RepairType): string {
 			return "null→omit";
 		case "mcp-args-stringify":
 			return "stringify";
+		case "wrap-string-array":
+			return "string→array";
+		case "empty-object-array":
+			return "{}→[]";
+		case "relation-default":
+			return "relation-default";
 		default:
 			return type;
 	}

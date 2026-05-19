@@ -31,6 +31,77 @@ function isPathLikeFieldKey(key: string): boolean {
   return key === "path" || key === "file" || key === "filepath" || key === "file_path";
 }
 
+function looksFileLikePath(value: string): boolean {
+  const text = value.trim();
+  if (text.length === 0 || text.length >= 200) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return false;
+  if (/^[^@\s<>]+@[^@\s<>]+$/i.test(text)) return false;
+  return /(?:^|[/\\])[^/\\\s]+\.[a-z0-9]{1,10}$/i.test(text);
+}
+
+export function stripMarkdownFileReference(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length >= 200) return undefined;
+
+  const angle = /^<([^<>]+)>$/.exec(trimmed);
+  if (angle && looksFileLikePath(angle[1])) return angle[1].trim();
+
+  const link = /^\[([^\]\r\n]+)\]\([^\)\r\n]+\)$/.exec(trimmed);
+  if (link && looksFileLikePath(link[1])) return link[1].trim();
+
+  return undefined;
+}
+
+export function parseLooseStringArray(value: string): string[] | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return undefined;
+
+  const body = trimmed.slice(1, -1).trim();
+  if (body === "") return [];
+
+  const result: string[] = [];
+  let i = 0;
+  const skipWhitespace = () => {
+    while (i < body.length && /\s/.test(body[i])) i++;
+  };
+
+  while (i < body.length) {
+    skipWhitespace();
+    const quote = body[i];
+    if (quote !== "'" && quote !== '"') return undefined;
+    i++;
+
+    let item = "";
+    let escaped = false;
+    for (; i < body.length; i++) {
+      const ch = body[i];
+      if (escaped) {
+        item += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) break;
+      item += ch;
+    }
+    if (body[i] !== quote) return undefined;
+    i++;
+    result.push(item);
+
+    skipWhitespace();
+    if (i >= body.length) break;
+    if (body[i] !== ",") return undefined;
+    i++;
+    skipWhitespace();
+    if (i >= body.length) return undefined;
+  }
+
+  return result;
+}
+
 export function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -82,7 +153,14 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): RepairRecord[] 
             // Skip remaining passes — they'd operate on the stale original string
             continue;
           }
-        } catch { /* not valid JSON, leave alone */ }
+        } catch {
+          const parsed = parseLooseStringArray(t);
+          if (parsed !== undefined) {
+            (obj as Record<string, unknown>)[key] = parsed;
+            fixes.push({ type: "json-parse", path: fullPath, stage: "tool-call", detail: "array" });
+            continue;
+          }
+        }
       }
     }
 
@@ -107,14 +185,12 @@ export function repairArgs(obj: unknown, path = "$", depth = 0): RepairRecord[] 
     }
 
     // 4. Strip accidental Markdown autolinks from file-like paths
-    if (
-      typeof val === "string" &&
-      isPathLikeFieldKey(key) &&
-      /^<[^>]+\.[a-z]{1,6}>$/i.test(val) &&
-      val.length < 200
-    ) {
-      (obj as Record<string, unknown>)[key] = val.slice(1, -1);
-      fixes.push({ type: "strip-md-link", path: fullPath, stage: "tool-call" });
+    if (typeof val === "string" && isPathLikeFieldKey(key)) {
+      const unlinked = stripMarkdownFileReference(val);
+      if (unlinked !== undefined) {
+        (obj as Record<string, unknown>)[key] = unlinked;
+        fixes.push({ type: "strip-md-link", path: fullPath, stage: "tool-call" });
+      }
     }
 
     // 5. Close unclosed braces in truncated JSON strings

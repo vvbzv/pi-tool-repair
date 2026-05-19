@@ -7,7 +7,7 @@ import {
 	unregisterRepairedOpenAICompletionsProvider,
 } from "./src/provider-shim";
 import { OPENCODE_GO_PROVIDER, OPENCODE_GO_REPAIR_PROVIDER } from "./src/provider-models";
-import { editSchema, multiEditSchema } from "./test-fixtures/tool-schemas";
+import { editSchema, multiEditSchema, readSchema } from "./test-fixtures/tool-schemas";
 
 let passed = 0;
 let failed = 0;
@@ -108,13 +108,14 @@ async function runCase(
 	schema: unknown,
 	rawChunks: string[],
 	expected: Record<string, unknown>,
-	options: { contentIndex?: number; separateEventToolCall?: boolean } = {},
+	options: { contentIndex?: number; separateEventToolCall?: boolean; toolName?: string } = {},
 ) {
-	const { baseStream, fixture } = fakeOpenAIStream(rawChunks, "edit", options);
+	const toolName = options.toolName ?? "edit";
+	const { baseStream, fixture } = fakeOpenAIStream(rawChunks, toolName, options);
 	const wrapped = createRepairedOpenAICompletionsSimpleStream(baseStream);
 	const context: Context = {
 		messages: [],
-		tools: [{ name: "edit", description: "edit", parameters: schema as never }],
+		tools: [{ name: toolName, description: toolName, parameters: schema as never }],
 	};
 	const model = { id: "test-model", api: "openai-completions", provider: "test-provider" } as Model<"openai-completions">;
 	registerRepairedOpenAICompletionsProvider(model.provider);
@@ -122,7 +123,7 @@ async function runCase(
 		const events = await collectEvents(wrapped(model, context));
 		const endEvent = events.find((event) => event.type === "toolcall_end");
 		const doneEvent = events.find((event) => event.type === "done");
-		const expectedBlock = { type: "toolCall", id: "call_1", name: "edit", arguments: expected };
+		const expectedBlock = { type: "toolCall", id: "call_1", name: toolName, arguments: expected };
 
 		assert(
 			`${name} repairs toolcall_end arguments`,
@@ -234,6 +235,38 @@ async function main() {
 
 	const patch = "*** Begin Patch\n*** Update File: x.ts\n@@\n-a\n+b\n*** End Patch";
 	await runCase("known-schema patch string", multiEditSchema, [JSON.stringify({ patch })], { patch });
+	await runCase(
+		"provider shim single-quoted array",
+		{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+		[JSON.stringify({ paths: "['a.ts', 'b.ts']" })],
+		{ paths: ["a.ts", "b.ts"] },
+	);
+	await runCase(
+		"provider shim markdown linked path",
+		readSchema,
+		[JSON.stringify({ path: "[notes.md](https://example.test/notes)" })],
+		{ path: "notes.md" },
+		{ toolName: "read" },
+	);
+	await runCase(
+		"provider shim empty object for array",
+		{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+		[JSON.stringify({ paths: {} })],
+		{ paths: [] },
+	);
+	await runCase(
+		"provider shim bare string for string array",
+		{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+		[JSON.stringify({ paths: "src/only.ts" })],
+		{ paths: ["src/only.ts"] },
+	);
+	await runCase(
+		"provider shim read limit defaults offset",
+		readSchema,
+		[JSON.stringify({ path: "README.md", limit: "20" })],
+		{ path: "README.md", limit: 20, offset: 1 },
+		{ toolName: "read" },
+	);
 	await runCase(
 		"non-zero content index with distinct event toolCall reference",
 		editSchema,

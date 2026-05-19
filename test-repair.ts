@@ -98,6 +98,20 @@ test(
 );
 
 test(
+	"markdown linked path",
+	{ path: "[notes.md](https://example.test/notes)" },
+	{ path: "notes.md" },
+	["strip-md-link $.path"],
+);
+
+test(
+	"single-quoted array string",
+	{ paths: "['src/a.ts', 'src/b.ts']" },
+	{ paths: ["src/a.ts", "src/b.ts"] },
+	["json-parse $.paths (array)"],
+);
+
+test(
 	"unclosed braces in truncated JSON",
 	{ payload: '{"name":"test","items":[1,2' },
 	{ payload: '{"name":"test","items":[1,2]}' },
@@ -179,6 +193,12 @@ test(
 	[],
 );
 
+test(
+	"generic repair preserves markdown prose link outside path fields",
+	{ message: "[notes.md](https://example.test/notes)" },
+	{ message: "[notes.md](https://example.test/notes)" },
+	[],
+);
 
 // ── v0.1.2 tests: snake_case params ─────────────
 
@@ -385,8 +405,8 @@ testToolInput(
 	"schema-aware read: numeric string coerces before fallback",
 	"read",
 	{ path: "x.ts", limit: "10" },
-	{ path: "x.ts", limit: 10 },
-	["scalar-coerce $.limit (number)"],
+	{ path: "x.ts", limit: 10, offset: 1 },
+	["scalar-coerce $.limit (number)", "relation-default $.offset (limit→offset=1)"],
 	readSchema,
 );
 

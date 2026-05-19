@@ -45,10 +45,11 @@ const readRepair = repairArgsWithSchema(
 	readSchema,
 	{ stage: "prepare-arguments", toolName: "read" },
 );
-assertJson("repairs read scalar and optional null", readRepair.value, { path: "package.json", limit: 10 });
+assertJson("repairs read scalar and optional null", readRepair.value, { path: "package.json", limit: 10, offset: 1 });
 assertFixes("records read scalar and optional null", readRepair.records, [
 	"scalar-coerce $.limit (number)",
 	"null→omit $.offset",
+	"relation-default $.offset (limit→offset=1)",
 ]);
 
 const readPathRepair = repairArgsWithSchema(
@@ -59,6 +60,25 @@ const readPathRepair = repairArgsWithSchema(
 assertJson("repairs schema string markdown path", readPathRepair.value, { path: "src/utils.ts" });
 assertFixes("records schema string markdown path", readPathRepair.records, ["strip-md-link $.path"]);
 
+const readMarkdownLinkRepair = repairArgsWithSchema(
+	{ path: "[notes.md](https://example.test/notes)" },
+	readSchema,
+	{ stage: "prepare-arguments", toolName: "read" },
+);
+assertJson("repairs schema markdown linked path", readMarkdownLinkRepair.value, { path: "notes.md" });
+assertFixes("records schema markdown linked path", readMarkdownLinkRepair.records, ["strip-md-link $.path"]);
+
+const readLimitOffsetRepair = repairArgsWithSchema(
+	{ path: "package.json", limit: "10" },
+	readSchema,
+	{ stage: "prepare-arguments", toolName: "read" },
+);
+assertJson("defaults read offset when limit is provided", readLimitOffsetRepair.value, { path: "package.json", limit: 10, offset: 1 });
+assertFixes("records read offset relational default", readLimitOffsetRepair.records, [
+	"scalar-coerce $.limit (number)",
+	"relation-default $.offset (limit→offset=1)",
+]);
+
 const emptyArrayRepair = repairArgsWithSchema(
 	{ paths: "[]" },
 	{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
@@ -66,6 +86,38 @@ const emptyArrayRepair = repairArgsWithSchema(
 );
 assertJson("repairs empty array container string", emptyArrayRepair.value, { paths: [] });
 assertFixes("records empty array container string", emptyArrayRepair.records, ["json-parse $.paths (array)"]);
+
+const emptyObjectArrayRepair = repairArgsWithSchema(
+	{ paths: {} },
+	{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+	{ stage: "prepare-arguments", toolName: "array_tool" },
+);
+assertJson("repairs empty object where array expected", emptyObjectArrayRepair.value, { paths: [] });
+assertFixes("records empty object where array expected", emptyObjectArrayRepair.records, ["{}→[] $.paths"]);
+
+const stringifiedEmptyObjectArrayRepair = repairArgsWithSchema(
+	{ paths: "{}" },
+	{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+	{ stage: "prepare-arguments", toolName: "array_tool" },
+);
+assertJson("repairs stringified empty object where array expected", stringifiedEmptyObjectArrayRepair.value, { paths: [] });
+assertFixes("records stringified empty object where array expected", stringifiedEmptyObjectArrayRepair.records, ["{}→[] $.paths"]);
+
+const bareStringArrayRepair = repairArgsWithSchema(
+	{ paths: "src/only.ts" },
+	{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+	{ stage: "prepare-arguments", toolName: "array_tool" },
+);
+assertJson("repairs bare string where string array expected", bareStringArrayRepair.value, { paths: ["src/only.ts"] });
+assertFixes("records bare string where string array expected", bareStringArrayRepair.records, ["string→array $.paths (1 item)"]);
+
+const linkedPathArrayRepair = repairArgsWithSchema(
+	{ paths: "[notes.md](https://example.test/notes)" },
+	{ type: "object", required: [], properties: { paths: { type: "array", items: { type: "string" } } } },
+	{ stage: "prepare-arguments", toolName: "array_tool" },
+);
+assertJson("repairs markdown linked path where string array expected", linkedPathArrayRepair.value, { paths: ["notes.md"] });
+assertFixes("records markdown linked path where string array expected", linkedPathArrayRepair.records, ["strip-md-link $.paths"]);
 
 const payloadRepair = repairArgsWithSchema(
 	{ payload: '{"items":[1,2', limit: "10" },
@@ -101,6 +153,14 @@ const editRepair = repairArgsWithSchema(
 );
 assertJson("repairs stringified edit array", editRepair.value, { path: "x.ts", edits: [{ oldText: "a", newText: "b" }] });
 assertFixes("records stringified edit array", editRepair.records, ["json-parse $.edits (array)"]);
+
+const looseArrayRepair = repairArgsWithSchema(
+	{ path: "x.ts", edits: "['src/a.ts', 'src/b.ts']" },
+	{ type: "object", required: [], properties: { edits: { type: "array", items: { type: "string" } } } },
+	{ stage: "prepare-arguments", toolName: "array_tool" },
+);
+assertJson("repairs single-quoted stringified array", looseArrayRepair.value, { path: "x.ts", edits: ["src/a.ts", "src/b.ts"] });
+assertFixes("records single-quoted stringified array", looseArrayRepair.records, ["json-parse $.edits (array)"]);
 
 const mismatchedArrayRepair = repairArgsWithSchema(
 	{ path: "x.ts", edits: "{\"oldText\":\"a\",\"newText\":\"b\"}" },
